@@ -112,6 +112,22 @@ describe("claudeCode.run", () => {
     expect(JSON.parse(r.finalMessage).args).not.toContain("--model");
   });
 
+  it("passes an empty --tools argument to disable every tool, and omits --tools by default", async () => {
+    const none = await claudeCode.run({ prompt: "p", timeoutMs: 20_000, tools: [] }, ws);
+    const args: string[] = JSON.parse(none.finalMessage).args;
+    expect(args[args.indexOf("--tools") + 1]).toBe("");
+
+    const some = await claudeCode.run(
+      { prompt: "p", timeoutMs: 20_000, tools: ["Read", "Grep"] },
+      ws,
+    );
+    const args2: string[] = JSON.parse(some.finalMessage).args;
+    expect(args2[args2.indexOf("--tools") + 1]).toBe("Read,Grep");
+
+    const dflt = await claudeCode.run({ prompt: "p", timeoutMs: 20_000 }, ws);
+    expect(JSON.parse(dflt.finalMessage).args).not.toContain("--tools");
+  });
+
   it("does not copy credentials when ANTHROPIC_API_KEY is set", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-test";
     process.env.CLAUDE_CONFIG_DIR = join(tmp, "nowhere");

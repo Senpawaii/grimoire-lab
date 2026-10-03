@@ -39,6 +39,18 @@ export const Assertion = z.discriminatedUnion("type", [
 ]);
 export type Assertion = z.infer<typeof Assertion>;
 
+/** An LLM scores the task result 1-5 against a rubric, in addition to the assertions. */
+const JudgeSpec = z.strictObject({
+  rubric: z.string().min(1),
+  passScore: z.number().int().min(1).max(5).default(4),
+  model: z.string().min(1).optional(),
+  /** Shell commands run in the workspace; their output is shown to the judge. */
+  commands: z.array(z.string().min(1)).default([]),
+  /** Workspace-relative text files shown to the judge. */
+  files: z.array(z.string().min(1)).default([]),
+});
+export type JudgeSpec = z.infer<typeof JudgeSpec>;
+
 const Task = z.strictObject({
   id: z.string().regex(/^[A-Za-z0-9_-]+$/, "task id may only contain letters, digits, _ and -"),
   prompt: z.string().min(1),
@@ -46,6 +58,7 @@ const Task = z.strictObject({
   fixtures: z.string().optional(),
   timeoutMs: z.number().int().positive().optional(),
   assertions: z.array(Assertion).min(1, "a task needs at least one assertion"),
+  judge: JudgeSpec.optional(),
 });
 
 const SuiteFile = z.strictObject({
@@ -66,6 +79,7 @@ export interface ResolvedTask {
   fixturesDir?: string;
   timeoutMs: number;
   assertions: Assertion[];
+  judge?: JudgeSpec;
 }
 
 export interface Suite {
@@ -95,6 +109,7 @@ export function parseSuite(source: string, baseDir: string): Suite {
       fixturesDir: t.fixtures ? resolve(baseDir, t.fixtures) : undefined,
       timeoutMs: t.timeoutMs ?? defaults.timeoutMs,
       assertions: t.assertions,
+      judge: t.judge,
     })),
   };
 }

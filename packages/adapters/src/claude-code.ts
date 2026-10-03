@@ -147,6 +147,8 @@ export const claudeCode: AgentAdapter = {
       "bypassPermissions",
       "--no-session-persistence",
       ...(req.model ? ["--model", req.model] : []),
+      // An empty list must reach claude as an empty argument to disable every tool.
+      ...(req.tools ? ["--tools", req.tools.join(",")] : []),
     ];
     // The prompt goes over stdin: no shell quoting or Windows command-line length limits.
     const r = await execa("claude", args, {

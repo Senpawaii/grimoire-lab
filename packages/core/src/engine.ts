@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type AssertionResult, evaluateAssertion } from "./assertions.js";
+import { runJudge } from "./judge.js";
 import type { ResultStore, TrialRecord } from "./store.js";
 import type { ResolvedTask, Suite } from "./suite.js";
 import type { AgentAdapter, RunResult } from "./types.js";
@@ -46,6 +47,18 @@ async function runTrial(
     if (result.status === "completed") {
       const ctx = { ws, result, skill: variant.skill };
       assertions = await Promise.all(task.assertions.map((a) => evaluateAssertion(a, ctx)));
+      if (task.judge) {
+        // Always judged, even when assertions failed, so scores are comparable across variants.
+        assertions.push(
+          await runJudge({
+            adapter: o.adapter,
+            spec: task.judge,
+            taskPrompt: task.prompt,
+            finalMessage: result.finalMessage,
+            ws,
+          }),
+        );
+      }
     }
   } catch (err) {
     result = {
