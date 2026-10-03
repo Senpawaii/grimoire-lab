@@ -1,0 +1,17 @@
+{
+  "name": "@grimoire/cli",
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "grimoire": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
+  "dependencies": {
+    "@grimoire/adapters": "workspace:*",
+    "@grimoire/core": "workspace:*",
+    "commander": "^15.0.0"
+  }
+}
