@@ -28,9 +28,9 @@ grimoire new pdf-extract
 grimoire bench .claude/skills/pdf-extract --repeat 3 --model haiku
 grimoire report            # latest run; `report <id>` for an older one
 ```
+
 The link points at `packages/cli/dist`, so rerun `pnpm build` after pulling or editing the code.
 Remove it with `npm unlink -g @grimoire/cli`. Publishing to npm (for `npx`) is not set up yet.
-
 
 Example output:
 
