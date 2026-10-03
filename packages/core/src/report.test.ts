@@ -103,4 +103,29 @@ describe("formatReport", () => {
     expect(out).toContain("agent claude-code 2.1.0 · model haiku");
     expect(out).toContain("x@abcd1234: x (sha256:abcd1234ffff)");
   });
+
+  it("does not repeat the skill reference when the label already is name@version", () => {
+    const out = formatReport(
+      {
+        ...run,
+        variants: [
+          {
+            label: "demo@0.9.0",
+            skillName: "demo",
+            skillVersion: "0.9.0",
+            skillDigest: "sha256:1111111111112222",
+          },
+          {
+            label: "demo@1.0.0",
+            skillName: "demo",
+            skillVersion: "1.0.0",
+            skillDigest: "sha256:3333333333334444",
+          },
+        ],
+      },
+      [t({ variant: "demo@0.9.0" }), t({ variant: "demo@1.0.0" })],
+    );
+    expect(out).toContain("  demo@0.9.0: sha256:111111111111\n");
+    expect(out).toContain("  demo@1.0.0: sha256:333333333333\n");
+  });
 });

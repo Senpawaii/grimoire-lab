@@ -62,11 +62,12 @@ export function formatReport(run: RunRecord, trials: TrialRecord[]): string {
   const lines = [
     `suite ${run.suite} · agent ${run.agent}${run.agentVersion ? ` ${run.agentVersion}` : ""}${run.model ? ` · model ${run.model}` : ""}`,
     `run ${run.id} · ${run.startedAt}`,
-    ...run.variants.map((v) =>
-      v.skillName
-        ? `  ${v.label}: ${v.skillName}${v.skillVersion ? `@${v.skillVersion}` : ""} (${(v.skillDigest ?? "").slice(0, 19)})`
-        : `  ${v.label}: no skill`,
-    ),
+    ...run.variants.map((v) => {
+      if (!v.skillName) return `  ${v.label}: no skill`;
+      const ref = `${v.skillName}${v.skillVersion ? `@${v.skillVersion}` : ""}`;
+      const digest = (v.skillDigest ?? "").slice(0, 19);
+      return `  ${v.label}: ${ref === v.label ? digest : `${ref} (${digest})`}`;
+    }),
     "",
   ];
 
