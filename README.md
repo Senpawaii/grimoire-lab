@@ -5,8 +5,9 @@ Benchmark agent skills. Does a skill actually beat the same agent without it?
 `grimoire bench` runs a skill's task suite twice, with the skill installed and without, in throwaway
 workspaces, then compares pass rate, tokens, cost and time.
 
-> Status: early. One agent (Claude Code) and one comparison (skill vs. no-skill baseline).
-> Planned: version-vs-version, agent-vs-agent, an LLM judge, more adapters.
+> Status: early. One agent (Claude Code). Comparisons: skill vs. no-skill baseline, and skill
+> version vs. skill version.
+> Planned: agent-vs-agent, an LLM judge, more adapters.
 
 ## Requirements
 
@@ -16,15 +17,20 @@ workspaces, then compares pass rate, tokens, cost and time.
 ## Usage
 
 ```sh
+# once, from a clone: build and put `grimoire` on your PATH
 pnpm install && pnpm build
+(cd packages/cli && npm link)
 
 # scaffold a skill (default location: .claude/skills/<name>) with a starter suite
-node packages/cli/dist/bin.js new pdf-extract
+grimoire new pdf-extract
 
 # edit .claude/skills/pdf-extract/grimoire.bench.yaml, then:
-node packages/cli/dist/bin.js bench .claude/skills/pdf-extract --repeat 3 --model haiku
-node packages/cli/dist/bin.js report            # latest run; `report <id>` for an older one
+grimoire bench .claude/skills/pdf-extract --repeat 3 --model haiku
+grimoire report            # latest run; `report <id>` for an older one
 ```
+
+The link points at `packages/cli/dist`, so rerun `pnpm build` after pulling or editing the code.
+Remove it with `npm unlink -g @grimoire/cli`. Publishing to npm (for `npx`) is not set up yet.
 
 Example output:
 
@@ -36,6 +42,23 @@ with-skill    3/3        81.8k        6s         $0.034
 
 Results land in `.grimoire/` (gitignored): `results.db` (SQLite) plus per-trial transcripts under
 `.grimoire/runs/<id>/`.
+
+### Comparing versions
+
+```sh
+# working tree vs the tag demo@1.0.0 (a bare semver means the tag <skill>@<semver>)
+grimoire bench .claude/skills/demo --against 1.0.0
+# vs the last commit, any branch/tag/commit, or another directory
+grimoire bench .claude/skills/demo --against HEAD
+grimoire bench .claude/skills/demo --against ../old-checkout/demo
+```
+
+Both versions run the same suite (the one next to the skill you pass) and are labeled
+`name@version`; if an edited skill kept its version, both labels get a `+digest` suffix. Git
+sources are read from the repository containing the skill, at the same relative path, without
+touching your working tree. There is no baseline in this mode. Identical contents are rejected.
+
+A `results.db` from the first release (schema v1) is rejected with an error; delete it to start fresh.
 
 ## Skill format
 
@@ -66,7 +89,7 @@ tasks:
       - { type: file_contains, path: table.csv, regex: "Q3,\\d+" }
       - { type: command, run: "node check.js", exitCode: 0 }
       - { type: transcript_contains, tool: Bash, pattern: "pdftotext" }
-      - { type: skill_loaded }              # skipped in the baseline cell
+      - { type: skill_loaded }              # skipped when there is no skill (baseline)
       - { type: max, metric: tokens, value: 40000 }   # tokens | durationMs | costUsd
 ```
 
@@ -82,7 +105,7 @@ A trial passes when every assertion passes. Errored and timed-out trials count a
    baseline.
 4. Assertions run against the workspace and the normalized transcript.
 
-Cells are interleaved within each repeat so drift (rate limits, load) affects both equally.
+Variants are interleaved within each repeat so drift (rate limits, load) affects all of them equally.
 
 Limits:
 

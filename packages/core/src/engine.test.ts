@@ -7,6 +7,7 @@ import { runBench } from "./engine.js";
 import { ResultStore, type TrialRecord } from "./store.js";
 import { parseSuite } from "./suite.js";
 import type { AgentAdapter, RunResult, Skill, Workspace } from "./types.js";
+import { buildVariants, type Variant } from "./variants.js";
 
 let tmp: string;
 beforeEach(async () => {
@@ -70,11 +71,15 @@ function fakeAdapter(opts: FakeOpts = {}) {
   return { adapter, calls };
 }
 
-async function bench(adapter: AgentAdapter, s = suite("[{ type: file_exists, path: out.txt }]")) {
+async function bench(
+  adapter: AgentAdapter,
+  s = suite("[{ type: file_exists, path: out.txt }]"),
+  variants: Variant[] = buildVariants(skill),
+) {
   const store = new ResultStore(":memory:");
   const seen: TrialRecord[] = [];
   const runId = await runBench({
-    skill,
+    variants,
     suite: s,
     adapter,
     store,
@@ -110,11 +115,17 @@ describe("runBench", () => {
     expect(store.listTrials(runId)).toHaveLength(4);
     expect(store.getRun(runId)).toMatchObject({
       suite: "s",
-      skillName: "demo",
-      skillVersion: "1.0.0",
-      skillDigest: "sha256:1",
       agent: "fake",
       agentVersion: "9.9",
+      variants: [
+        { label: "baseline" },
+        {
+          label: "with-skill",
+          skillName: "demo",
+          skillVersion: "1.0.0",
+          skillDigest: "sha256:1",
+        },
+      ],
     });
     expect(seen.every((t) => t.passed && t.tokens === 50)).toBe(true);
   });
@@ -187,7 +198,7 @@ describe("runBench", () => {
   it("writes transcript and raw output files under the run directory", async () => {
     const { adapter } = fakeAdapter({ onRun: writeOut });
     const { seen, runId } = await bench(adapter);
-    const t = seen.find((x) => x.cell === "with-skill");
+    const t = seen.find((x) => x.variant === "with-skill");
     expect(t?.transcriptPath).toMatch(new RegExp(`^runs/${runId}/with-skill__t1__1\\.jsonl$`));
     expect(existsSync(join(tmp, t?.transcriptPath ?? ""))).toBe(true);
     expect(existsSync(join(tmp, `runs/${runId}/baseline__t1__1.raw.txt`))).toBe(true);
@@ -196,5 +207,55 @@ describe("runBench", () => {
   it("refuses to run when the agent is unavailable", async () => {
     const { adapter } = fakeAdapter({ available: false });
     await expect(bench(adapter)).rejects.toThrow(/not available/);
+  });
+
+  describe("comparing two skill versions", () => {
+    const older: Skill = { ...skill, dir: "/skill-old", version: "0.9.0", digest: "sha256:0" };
+
+    it("installs each version into its own workspace and scopes skill_loaded to it", async () => {
+      const { adapter } = fakeAdapter({ onRun: writeOut });
+      const installed: (string | undefined)[] = [];
+      const install = adapter.install.bind(adapter);
+      adapter.install = async (s, ws) => {
+        installed.push(s.version);
+        await install(s, ws);
+      };
+      const { seen } = await bench(
+        adapter,
+        suite("[{ type: skill_loaded }]"),
+        buildVariants(skill, older),
+      );
+
+      expect(installed).toEqual(["0.9.0", "1.0.0", "0.9.0", "1.0.0"]);
+      expect(seen.map((t) => t.variant)).toEqual([
+        "demo@0.9.0",
+        "demo@1.0.0",
+        "demo@0.9.0",
+        "demo@1.0.0",
+      ]);
+      expect(seen.every((t) => t.passed)).toBe(true);
+    });
+
+    it("writes transcripts with filesystem-safe names for labels containing odd characters", async () => {
+      const { adapter } = fakeAdapter({ onRun: writeOut });
+      const variants: Variant[] = [
+        { label: "a b/c", skill: older },
+        { label: "d", skill },
+      ];
+      const { seen } = await bench(adapter, undefined, variants);
+      expect(seen[0]?.transcriptPath).toMatch(/\/a_b_c__t1__1\.jsonl$/);
+      expect(existsSync(join(tmp, seen[0]?.transcriptPath ?? ""))).toBe(true);
+    });
+
+    it("rejects fewer than two variants and duplicate labels before running anything", async () => {
+      const { adapter, calls } = fakeAdapter();
+      await expect(bench(adapter, undefined, [{ label: "baseline" }])).rejects.toThrow(
+        /at least two/,
+      );
+      await expect(
+        bench(adapter, undefined, [{ label: "x" }, { label: "x", skill }]),
+      ).rejects.toThrow(/unique/);
+      expect(calls).toEqual([]);
+    });
   });
 });
