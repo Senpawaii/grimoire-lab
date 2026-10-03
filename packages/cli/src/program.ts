@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import { getAdapter } from "@grimoire/adapters";
 import {
+  type AgentAdapter,
   formatReport,
   formatTrialLine,
   loadSkill,
@@ -17,7 +18,11 @@ function positiveInt(value: string): number {
   return n;
 }
 
-export function createProgram(log: (line: string) => void = console.log): Command {
+/** `resolveAdapter` is injectable so tests can bench without a real agent CLI. */
+export function createProgram(
+  log: (line: string) => void = console.log,
+  resolveAdapter: (id: string) => AgentAdapter = getAdapter,
+): Command {
   const program = new Command("grimoire")
     .description("Benchmark agent skills against a no-skill baseline")
     .exitOverride();
@@ -46,7 +51,7 @@ export function createProgram(log: (line: string) => void = console.log): Comman
       ) => {
         const skill = await loadSkill(skillDir);
         const suite = await loadSuite(opts.suite ?? join(skill.dir, "grimoire.bench.yaml"));
-        const adapter = getAdapter(opts.agent);
+        const adapter = resolveAdapter(opts.agent);
         const outDir = resolve(opts.out);
         const store = new ResultStore(join(outDir, "results.db"));
         try {

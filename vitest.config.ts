@@ -12,5 +12,12 @@ export default defineConfig({
   },
   test: {
     include: ["packages/*/src/**/*.test.ts"],
+    coverage: {
+      provider: "v8",
+      include: ["packages/*/src/**/*.ts"],
+      // index.ts files only re-export; bin.ts is the process entrypoint (see scripts/coverage-changed.mjs).
+      exclude: ["**/*.test.ts", "**/index.ts", "**/bin.ts", "**/types.ts"],
+      reporter: ["text"],
+    },
   },
 });
