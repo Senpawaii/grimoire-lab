@@ -1,7 +1,7 @@
 import type { RunRecord, TrialRecord } from "./store.js";
 
-export interface CellSummary {
-  cell: TrialRecord["cell"];
+export interface VariantSummary {
+  variant: string;
   trials: number;
   passes: number;
   meanTokens?: number;
@@ -13,14 +13,19 @@ function mean(values: number[]): number | undefined {
   return values.length === 0 ? undefined : values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-/** Errored and timed-out trials count as failures; means skip trials that lack the metric. */
-export function summarize(trials: TrialRecord[]): CellSummary[] {
-  const cells: TrialRecord["cell"][] = ["baseline", "with-skill"];
-  return cells
-    .map((cell) => ({ cell, ts: trials.filter((t) => t.cell === cell) }))
+/**
+ * One summary per variant, in `order` (default: first appearance). Errored and timed-out trials
+ * count as failures; means skip trials that lack the metric.
+ */
+export function summarize(
+  trials: TrialRecord[],
+  order: string[] = [...new Set(trials.map((t) => t.variant))],
+): VariantSummary[] {
+  return order
+    .map((variant) => ({ variant, ts: trials.filter((t) => t.variant === variant) }))
     .filter(({ ts }) => ts.length > 0)
-    .map(({ cell, ts }) => ({
-      cell,
+    .map(({ variant, ts }) => ({
+      variant,
       trials: ts.length,
       passes: ts.filter((t) => t.passed).length,
       meanTokens: mean(ts.flatMap((t) => (t.tokens === undefined ? [] : [t.tokens]))),
@@ -35,7 +40,7 @@ export function formatTrialLine(t: TrialRecord): string {
   const failed = t.assertions.filter((a) => !a.passed).map((a) => a.detail);
   const why =
     t.status !== "completed" ? `${t.status}${t.error ? `: ${t.error}` : ""}` : failed.join("; ");
-  return `[${t.cell}] ${t.taskId} #${t.repeatIdx} ${mark(t)}${why ? `  ${why}` : ""}`;
+  return `[${t.variant}] ${t.taskId} #${t.repeatIdx} ${mark(t)}${why ? `  ${why}` : ""}`;
 }
 
 const fmtTokens = (n?: number) =>
@@ -55,19 +60,27 @@ function pad(rows: string[][]): string[] {
 
 export function formatReport(run: RunRecord, trials: TrialRecord[]): string {
   const lines = [
-    `suite ${run.suite} · skill ${run.skillName}${run.skillVersion ? `@${run.skillVersion}` : ""} (${run.skillDigest.slice(0, 19)}) · agent ${run.agent}${run.agentVersion ? ` ${run.agentVersion}` : ""}${run.model ? ` · model ${run.model}` : ""}`,
+    `suite ${run.suite} · agent ${run.agent}${run.agentVersion ? ` ${run.agentVersion}` : ""}${run.model ? ` · model ${run.model}` : ""}`,
     `run ${run.id} · ${run.startedAt}`,
+    ...run.variants.map((v) =>
+      v.skillName
+        ? `  ${v.label}: ${v.skillName}${v.skillVersion ? `@${v.skillVersion}` : ""} (${(v.skillDigest ?? "").slice(0, 19)})`
+        : `  ${v.label}: no skill`,
+    ),
     "",
   ];
 
   const taskIds = [...new Set(trials.map((t) => t.taskId))];
-  const cells = summarize(trials).map((s) => s.cell);
+  const summaries = summarize(
+    trials,
+    run.variants.map((v) => v.label),
+  );
   const perTask = taskIds.flatMap((id) =>
-    cells.map((cell) => [
-      `[${cell}]`,
+    summaries.map(({ variant }) => [
+      `[${variant}]`,
       id,
       trials
-        .filter((t) => t.taskId === id && t.cell === cell)
+        .filter((t) => t.taskId === id && t.variant === variant)
         .sort((a, b) => a.repeatIdx - b.repeatIdx)
         .map(mark)
         .join(" "),
@@ -77,8 +90,8 @@ export function formatReport(run: RunRecord, trials: TrialRecord[]): string {
 
   const table = [
     ["", "pass rate", "mean tokens", "mean time", "mean cost"],
-    ...summarize(trials).map((s) => [
-      s.cell,
+    ...summaries.map((s) => [
+      s.variant,
       `${s.passes}/${s.trials}`,
       fmtTokens(s.meanTokens),
       fmtSeconds(s.meanDurationMs),

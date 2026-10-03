@@ -48,7 +48,7 @@ describe("bench", () => {
     ).parseAsync(["node", "grimoire", "bench", skillDir, "--repeat", "2", "--out", out]);
 
     const text = lines.join("\n");
-    expect(text).toContain("demo-basic: 1 task(s) x 2 repeat(s) x 2 cells");
+    expect(text).toContain("demo-basic: 1 task(s) x 2 repeat(s) x 2 variants");
     expect(text).toContain("[baseline] example #1 ✓");
     expect(text).toContain("[with-skill] example #2 ✓");
     expect(text).toMatch(/baseline\s+2\/2/);
@@ -68,5 +68,49 @@ describe("bench", () => {
         () => fake(),
       ).parseAsync(["node", "grimoire", "bench", skillDir, "--repeat", "0"]),
     ).rejects.toThrow(/positive integer/);
+  });
+
+  it("--against compares two versions of the skill instead of the baseline", async () => {
+    const skillDir = await scaffoldSkill("demo", tmp);
+    const oldDir = await scaffoldSkill("demo", join(tmp, "old"));
+    await writeFile(
+      join(oldDir, "SKILL.md"),
+      "---\nname: demo\ndescription: older\nversion: 0.0.1\n---\nold\n",
+    );
+    const lines: string[] = [];
+
+    await createProgram(
+      (l) => lines.push(l),
+      () => fake(),
+    ).parseAsync([
+      "node",
+      "grimoire",
+      "bench",
+      skillDir,
+      "--against",
+      oldDir,
+      "--repeat",
+      "1",
+      "--out",
+      join(tmp, "out"),
+    ]);
+
+    const text = lines.join("\n");
+    expect(text).toContain("x 1 repeat(s) x 2 variants");
+    expect(text).toContain("[demo@0.0.1] example #1 ✓");
+    expect(text).toContain("[demo@0.1.0] example #1 ✓");
+    expect(text).not.toContain("baseline");
+  });
+
+  it("--against with identical contents fails before creating any results", async () => {
+    const skillDir = await scaffoldSkill("demo", tmp);
+    const out = join(tmp, "out");
+    await expect(
+      createProgram(
+        () => {},
+        () => fake(),
+      ).parseAsync(["node", "grimoire", "bench", skillDir, "--against", skillDir, "--out", out]),
+    ).rejects.toThrow(/identical contents/);
+    expect(existsSync(join(out, "results.db"))).toBe(false);
   });
 });

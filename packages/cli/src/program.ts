@@ -2,11 +2,13 @@ import { join, resolve } from "node:path";
 import { getAdapter } from "@grimoire/adapters";
 import {
   type AgentAdapter,
+  buildVariants,
   formatReport,
   formatTrialLine,
   loadSkill,
   loadSuite,
   ResultStore,
+  resolveAgainst,
   runBench,
 } from "@grimoire/core";
 import { Command, InvalidArgumentError } from "commander";
@@ -38,28 +40,46 @@ export function createProgram(
 
   program
     .command("bench <skillDir>")
-    .description("Run the skill's benchmark suite with and without the skill")
+    .description(
+      "Benchmark a skill: against no skill by default, or against another version with --against",
+    )
     .option("--suite <file>", "suite file (default: <skillDir>/grimoire.bench.yaml)")
-    .option("--repeat <n>", "trials per task and cell (overrides the suite)", positiveInt)
+    .option(
+      "--against <dir|ref>",
+      "compare with another skill directory, or a git ref/tag (a bare semver means tag <skill>@<semver>)",
+    )
+    .option("--repeat <n>", "trials per task and variant (overrides the suite)", positiveInt)
     .option("--model <model>", "model passed to the agent")
     .option("--agent <id>", "agent adapter", "claude-code")
     .option("--out <dir>", "output directory", ".grimoire")
     .action(
       async (
         skillDir: string,
-        opts: { suite?: string; repeat?: number; model?: string; agent: string; out: string },
+        opts: {
+          suite?: string;
+          against?: string;
+          repeat?: number;
+          model?: string;
+          agent: string;
+          out: string;
+        },
       ) => {
         const skill = await loadSkill(skillDir);
         const suite = await loadSuite(opts.suite ?? join(skill.dir, "grimoire.bench.yaml"));
         const adapter = resolveAdapter(opts.agent);
+        const against = opts.against ? await resolveAgainst(skill, opts.against) : undefined;
         const outDir = resolve(opts.out);
-        const store = new ResultStore(join(outDir, "results.db"));
+        let store: ResultStore | undefined;
         try {
+          const variants = buildVariants(skill, against?.skill);
+          store = new ResultStore(join(outDir, "results.db"));
           const repeat = opts.repeat ?? suite.repeat;
-          log(`${suite.name}: ${suite.tasks.length} task(s) x ${repeat} repeat(s) x 2 cells`);
+          log(
+            `${suite.name}: ${suite.tasks.length} task(s) x ${repeat} repeat(s) x ${variants.length} variants`,
+          );
           const runId = await runBench({
-            skill,
             suite,
+            variants,
             adapter,
             store,
             outDir,
@@ -73,7 +93,8 @@ export function createProgram(
           log(formatReport(run, store.listTrials(runId)));
           log(`\nSaved to ${join(outDir, "runs", String(runId))}`);
         } finally {
-          store.close();
+          store?.close();
+          await against?.cleanup();
         }
       },
     );

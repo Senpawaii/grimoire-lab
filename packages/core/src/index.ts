@@ -1,14 +1,15 @@
+export { type ResolvedAgainst, resolveAgainst } from "./against.js";
 export { type AssertionContext, type AssertionResult, evaluateAssertion } from "./assertions.js";
 export { digestDir } from "./digest.js";
 export { type BenchOptions, runBench } from "./engine.js";
-export { type CellSummary, formatReport, formatTrialLine, summarize } from "./report.js";
+export { formatReport, formatTrialLine, summarize, type VariantSummary } from "./report.js";
 export { loadSkill, splitFrontmatter } from "./skill.js";
 export {
-  type Cell,
   ResultStore,
   type RunMeta,
   type RunRecord,
   type TrialRecord,
+  type VariantMeta,
 } from "./store.js";
 export {
   Assertion,
@@ -26,4 +27,5 @@ export type {
   Usage,
   Workspace,
 } from "./types.js";
+export { buildVariants, type Variant } from "./variants.js";
 export { createWorkspace, destroyWorkspace } from "./workspace.js";

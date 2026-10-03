@@ -59,12 +59,14 @@ describe("commands", () => {
     const store = new ResultStore(join(out, "results.db"));
     const id = store.createRun({
       suite: "s",
-      skillName: "demo",
-      skillDigest: "sha256:0000000000000000000",
       agent: "claude-code",
+      variants: [
+        { label: "baseline" },
+        { label: "with-skill", skillName: "demo", skillDigest: "sha256:0000000000000000000" },
+      ],
     });
     store.close();
-    expect(await run([])).toContain("skill demo");
+    expect(await run([])).toContain("with-skill: demo");
     expect(await run([String(id)])).toContain(`run ${id}`);
     await expect(run(["99"])).rejects.toThrow(/No run with id 99/);
   });

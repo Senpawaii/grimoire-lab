@@ -3,16 +3,25 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AssertionResult } from "./assertions.js";
 
-export type Cell = "baseline" | "with-skill";
+/** v1 (first release) stored a single skill per run and had no `variants` table. */
+const SCHEMA_VERSION = 2;
+
+/** One arm of a comparison: the baseline (no skill) or a specific skill version. */
+export interface VariantMeta {
+  label: string;
+  /** Absent for the baseline. */
+  skillName?: string;
+  skillVersion?: string;
+  skillDigest?: string;
+}
 
 export interface RunMeta {
   suite: string;
-  skillName: string;
-  skillVersion?: string;
-  skillDigest: string;
   agent: string;
   agentVersion?: string;
   model?: string;
+  /** In run order; the first variant is also first in reports. */
+  variants: VariantMeta[];
 }
 
 export interface RunRecord extends RunMeta {
@@ -21,7 +30,7 @@ export interface RunRecord extends RunMeta {
 }
 
 export interface TrialRecord {
-  cell: Cell;
+  variant: string;
   taskId: string;
   repeatIdx: number;
   status: "completed" | "timeout" | "error";
@@ -40,18 +49,24 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   suite TEXT NOT NULL,
-  skill_name TEXT NOT NULL,
-  skill_version TEXT,
-  skill_digest TEXT NOT NULL,
   agent TEXT NOT NULL,
   agent_version TEXT,
   model TEXT,
   started_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS variants (
+  run_id INTEGER NOT NULL REFERENCES runs(id),
+  idx INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  skill_name TEXT,
+  skill_version TEXT,
+  skill_digest TEXT,
+  PRIMARY KEY (run_id, idx)
+);
 CREATE TABLE IF NOT EXISTS trials (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id INTEGER NOT NULL REFERENCES runs(id),
-  cell TEXT NOT NULL,
+  variant TEXT NOT NULL,
   task_id TEXT NOT NULL,
   repeat_idx INTEGER NOT NULL,
   status TEXT NOT NULL,
@@ -75,6 +90,9 @@ CREATE TABLE IF NOT EXISTS assertion_results (
 
 type Row = Record<string, string | number | bigint | null | Uint8Array>;
 
+const optional = (v: Row[string] | undefined) =>
+  v === null || v === undefined ? undefined : String(v);
+
 export class ResultStore {
   private db: DatabaseSync;
 
@@ -82,26 +100,69 @@ export class ResultStore {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA foreign_keys = ON");
+    try {
+      this.migrate(path);
+    } catch (err) {
+      this.db.close(); // an open handle would keep the file locked (EBUSY on Windows)
+      throw err;
+    }
+  }
+
+  private migrate(path: string): void {
+    const row = this.db.prepare("PRAGMA user_version").get() as Row;
+    const version = Number(row.user_version);
+    if (version > SCHEMA_VERSION) {
+      throw new Error(
+        `${path} was written by a newer grimoire (schema ${version}); upgrade grimoire`,
+      );
+    }
+    if (version === 0) {
+      const old = this.db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'runs'").get();
+      if (old) {
+        throw new Error(
+          `${path} uses the v1 results schema, which this version cannot read. Delete it to start fresh.`,
+        );
+      }
+    }
     this.db.exec(SCHEMA);
+    this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
   createRun(meta: RunMeta): number {
-    const r = this.db
-      .prepare(
-        `INSERT INTO runs (suite, skill_name, skill_version, skill_digest, agent, agent_version, model, started_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        meta.suite,
-        meta.skillName,
-        meta.skillVersion ?? null,
-        meta.skillDigest,
-        meta.agent,
-        meta.agentVersion ?? null,
-        meta.model ?? null,
-        new Date().toISOString(),
+    this.db.exec("BEGIN");
+    try {
+      const r = this.db
+        .prepare(
+          "INSERT INTO runs (suite, agent, agent_version, model, started_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          meta.suite,
+          meta.agent,
+          meta.agentVersion ?? null,
+          meta.model ?? null,
+          new Date().toISOString(),
+        );
+      const runId = Number(r.lastInsertRowid);
+      const ins = this.db.prepare(
+        `INSERT INTO variants (run_id, idx, label, skill_name, skill_version, skill_digest)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       );
-    return Number(r.lastInsertRowid);
+      meta.variants.forEach((v, i) => {
+        ins.run(
+          runId,
+          i,
+          v.label,
+          v.skillName ?? null,
+          v.skillVersion ?? null,
+          v.skillDigest ?? null,
+        );
+      });
+      this.db.exec("COMMIT");
+      return runId;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   addTrial(runId: number, t: TrialRecord): void {
@@ -109,13 +170,13 @@ export class ResultStore {
     try {
       const r = this.db
         .prepare(
-          `INSERT INTO trials (run_id, cell, task_id, repeat_idx, status, passed, tokens, cost_usd,
+          `INSERT INTO trials (run_id, variant, task_id, repeat_idx, status, passed, tokens, cost_usd,
              duration_ms, final_message, error, transcript_path)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           runId,
-          t.cell,
+          t.variant,
           t.taskId,
           t.repeatIdx,
           t.status,
@@ -149,16 +210,24 @@ export class ResultStore {
         : this.db.prepare("SELECT * FROM runs WHERE id = ?").get(id)
     ) as Row | undefined;
     if (!row) return undefined;
+    const variants = (
+      this.db
+        .prepare("SELECT * FROM variants WHERE run_id = ? ORDER BY idx")
+        .all(row.id as number) as Row[]
+    ).map((v) => ({
+      label: String(v.label),
+      skillName: optional(v.skill_name),
+      skillVersion: optional(v.skill_version),
+      skillDigest: optional(v.skill_digest),
+    }));
     return {
       id: Number(row.id),
       suite: String(row.suite),
-      skillName: String(row.skill_name),
-      skillVersion: row.skill_version === null ? undefined : String(row.skill_version),
-      skillDigest: String(row.skill_digest),
       agent: String(row.agent),
-      agentVersion: row.agent_version === null ? undefined : String(row.agent_version),
-      model: row.model === null ? undefined : String(row.model),
+      agentVersion: optional(row.agent_version),
+      model: optional(row.model),
       startedAt: String(row.started_at),
+      variants,
     };
   }
 
@@ -170,7 +239,7 @@ export class ResultStore {
       "SELECT * FROM assertion_results WHERE trial_id = ? ORDER BY idx",
     );
     return rows.map((r) => ({
-      cell: String(r.cell) as Cell,
+      variant: String(r.variant),
       taskId: String(r.task_id),
       repeatIdx: Number(r.repeat_idx),
       status: String(r.status) as TrialRecord["status"],
@@ -179,7 +248,7 @@ export class ResultStore {
       costUsd: r.cost_usd === null ? undefined : Number(r.cost_usd),
       durationMs: Number(r.duration_ms),
       finalMessage: String(r.final_message),
-      error: r.error === null ? undefined : String(r.error),
+      error: optional(r.error),
       transcriptPath: String(r.transcript_path),
       assertions: (assertionStmt.all(r.id as number) as Row[]).map((a) => ({
         type: String(a.type) as AssertionResult["type"],
