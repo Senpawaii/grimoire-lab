@@ -106,3 +106,7 @@ Packages: `@grimoire/core` (skill/suite parsing, assertions, engine, SQLite stor
 
 Adding an agent means implementing `AgentAdapter` from `@grimoire/core` (`detect`, `install`, `run`)
 and registering it in `packages/adapters/src/index.ts`.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
