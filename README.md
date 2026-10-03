@@ -99,6 +99,7 @@ Limits:
 pnpm lint     # Biome
 pnpm build    # tsc -b
 pnpm test     # Vitest (agent calls are faked; no credentials needed)
+pnpm coverage:changed [base]   # per-file >= 90% lines/statements/functions for files changed vs base (default origin/main); CI enforces this on PRs
 ```
 
 Packages: `@grimoire/core` (skill/suite parsing, assertions, engine, SQLite store, report),
