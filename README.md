@@ -17,15 +17,20 @@ workspaces, then compares pass rate, tokens, cost and time.
 ## Usage
 
 ```sh
+# once, from a clone: build and put `grimoire` on your PATH
 pnpm install && pnpm build
+(cd packages/cli && npm link)
 
 # scaffold a skill (default location: .claude/skills/<name>) with a starter suite
-node packages/cli/dist/bin.js new pdf-extract
+grimoire new pdf-extract
 
 # edit .claude/skills/pdf-extract/grimoire.bench.yaml, then:
-node packages/cli/dist/bin.js bench .claude/skills/pdf-extract --repeat 3 --model haiku
-node packages/cli/dist/bin.js report            # latest run; `report <id>` for an older one
+grimoire bench .claude/skills/pdf-extract --repeat 3 --model haiku
+grimoire report            # latest run; `report <id>` for an older one
 ```
+The link points at `packages/cli/dist`, so rerun `pnpm build` after pulling or editing the code.
+Remove it with `npm unlink -g @grimoire/cli`. Publishing to npm (for `npx`) is not set up yet.
+
 
 Example output:
 
@@ -42,10 +47,10 @@ Results land in `.grimoire/` (gitignored): `results.db` (SQLite) plus per-trial 
 
 ```sh
 # working tree vs the tag demo@1.0.0 (a bare semver means the tag <skill>@<semver>)
-node packages/cli/dist/bin.js bench .claude/skills/demo --against 1.0.0
+grimoire bench .claude/skills/demo --against 1.0.0
 # vs the last commit, any branch/tag/commit, or another directory
-node packages/cli/dist/bin.js bench .claude/skills/demo --against HEAD
-node packages/cli/dist/bin.js bench .claude/skills/demo --against ../old-checkout/demo
+grimoire bench .claude/skills/demo --against HEAD
+grimoire bench .claude/skills/demo --against ../old-checkout/demo
 ```
 
 Both versions run the same suite (the one next to the skill you pass) and are labeled
