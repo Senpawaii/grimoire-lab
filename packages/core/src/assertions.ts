@@ -1,8 +1,8 @@
 import { readFile, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
 import { execa } from "execa";
 import type { Assertion } from "./suite.js";
 import type { RunResult, Skill, TranscriptEvent, Workspace } from "./types.js";
+import { resolveInside } from "./workspace.js";
 
 export interface AssertionContext {
   ws: Workspace;
@@ -12,21 +12,15 @@ export interface AssertionContext {
 }
 
 export interface AssertionResult {
-  type: Assertion["type"];
+  /** "judge" is produced by the LLM judge, not by a suite assertion. */
+  type: Assertion["type"] | "judge";
   passed: boolean;
   detail: string;
+  /** 1-5, only for the judge. */
+  score?: number;
 }
 
 const COMMAND_TIMEOUT_MS = 60_000;
-
-function resolveInside(dir: string, p: string): string {
-  const abs = resolve(dir, p);
-  const rel = relative(dir, abs);
-  if (rel.startsWith("..") || isAbsolute(rel)) {
-    throw new Error(`path "${p}" escapes the workspace`);
-  }
-  return abs;
-}
 
 function searchableText(events: TranscriptEvent[], tool?: string): string[] {
   const out: string[] = [];

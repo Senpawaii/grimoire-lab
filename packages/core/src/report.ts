@@ -7,6 +7,8 @@ export interface VariantSummary {
   meanTokens?: number;
   meanDurationMs: number;
   meanCostUsd?: number;
+  /** Mean 1-5 judge score over trials that were judged. */
+  meanJudgeScore?: number;
 }
 
 function mean(values: number[]): number | undefined {
@@ -31,6 +33,9 @@ export function summarize(
       meanTokens: mean(ts.flatMap((t) => (t.tokens === undefined ? [] : [t.tokens]))),
       meanDurationMs: mean(ts.map((t) => t.durationMs)) ?? 0,
       meanCostUsd: mean(ts.flatMap((t) => (t.costUsd === undefined ? [] : [t.costUsd]))),
+      meanJudgeScore: mean(
+        ts.flatMap((t) => t.assertions.flatMap((a) => (a.score === undefined ? [] : [a.score]))),
+      ),
     }));
 }
 
@@ -89,14 +94,18 @@ export function formatReport(run: RunRecord, trials: TrialRecord[]): string {
   );
   lines.push(...pad(perTask), "");
 
+  const showJudge = summaries.some((s) => s.meanJudgeScore !== undefined);
   const table = [
-    ["", "pass rate", "mean tokens", "mean time", "mean cost"],
+    ["", "pass rate", "mean tokens", "mean time", "mean cost", ...(showJudge ? ["judge"] : [])],
     ...summaries.map((s) => [
       s.variant,
       `${s.passes}/${s.trials}`,
       fmtTokens(s.meanTokens),
       fmtSeconds(s.meanDurationMs),
       fmtCost(s.meanCostUsd),
+      ...(showJudge
+        ? [s.meanJudgeScore === undefined ? "-" : `${s.meanJudgeScore.toFixed(1)}/5`]
+        : []),
     ]),
   ];
   lines.push(...pad(table));

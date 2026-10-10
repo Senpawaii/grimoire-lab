@@ -31,6 +31,8 @@ export interface RunRequest {
   prompt: string;
   timeoutMs: number;
   model?: string;
+  /** Restrict the agent to these tools; an empty list disables all tools. Undefined = defaults. */
+  tools?: string[];
 }
 
 export interface RunResult {

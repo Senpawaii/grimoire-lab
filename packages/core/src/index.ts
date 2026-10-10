@@ -2,6 +2,7 @@ export { type ResolvedAgainst, resolveAgainst } from "./against.js";
 export { type AssertionContext, type AssertionResult, evaluateAssertion } from "./assertions.js";
 export { digestDir } from "./digest.js";
 export { type BenchOptions, runBench } from "./engine.js";
+export { buildJudgePrompt, type JudgeInput, parseVerdict, runJudge } from "./judge.js";
 export { formatReport, formatTrialLine, summarize, type VariantSummary } from "./report.js";
 export { loadSkill, splitFrontmatter } from "./skill.js";
 export {
@@ -13,6 +14,7 @@ export {
 } from "./store.js";
 export {
   Assertion,
+  type JudgeSpec,
   loadSuite,
   parseSuite,
   type ResolvedTask,

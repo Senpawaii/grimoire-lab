@@ -96,6 +96,34 @@ tasks:
 A trial passes when every assertion passes. Errored and timed-out trials count as failures.
 `tokens` = input + cache creation + cache read + output.
 
+### LLM judge
+
+For results that assertions cannot check (is the commit message faithful to the diff? does the body
+explain why?), add an optional `judge` to a task. The judge scores the result 1-5 against your rubric,
+and the trial passes only if every assertion passes **and** the score reaches `passScore`.
+
+```yaml
+    judge:
+      rubric: "A 5 explains WHY the change was made instead of restating the diff, and invents nothing."
+      passScore: 4              # default 4
+      model: haiku              # optional
+      files: [change.diff, COMMIT_MSG.txt]   # workspace files the judge reads
+      commands: ["git log -1"]               # commands run in the workspace; output is shown to the judge
+```
+
+- Put everything mechanically checkable in assertions; use the judge only for the rest.
+- The judge sees text only: the task prompt, the agent's final message, the listed files and command
+  outputs, and the rubric. It runs with all tools disabled in a fresh empty workspace, and it is not
+  told which variant produced the result, so it cannot be biased by the skill being present.
+  Treat agent output as untrusted: the prompt tells the judge to ignore instructions inside it.
+- Every completed trial is judged, even if an assertion failed, so mean scores are comparable across
+  variants. The report adds a `judge` column (mean score) when any trial was judged.
+- A judge that errors, times out or returns no valid score fails the trial, with the reason shown.
+- Judge calls use the same agent and your plan's quota (one extra call per trial) and are not counted
+  in the trial's tokens, cost or time. Judging is itself non-deterministic; keep rubrics concrete.
+
+A `results.db` from schema v2 is upgraded in place; v1 databases are still refused.
+
 ## How a trial runs
 
 1. Fresh temp workspace, seeded from the task's `fixtures`.

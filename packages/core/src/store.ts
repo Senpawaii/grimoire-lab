@@ -3,8 +3,11 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AssertionResult } from "./assertions.js";
 
-/** v1 (first release) stored a single skill per run and had no `variants` table. */
-const SCHEMA_VERSION = 2;
+/**
+ * v1 stored a single skill per run and had no `variants` table (unsupported, refused).
+ * v2 lacked `assertion_results.score`; it is migrated in place.
+ */
+const SCHEMA_VERSION = 3;
 
 /** One arm of a comparison: the baseline (no skill) or a specific skill version. */
 export interface VariantMeta {
@@ -84,6 +87,7 @@ CREATE TABLE IF NOT EXISTS assertion_results (
   type TEXT NOT NULL,
   passed INTEGER NOT NULL,
   detail TEXT NOT NULL,
+  score REAL,
   PRIMARY KEY (trial_id, idx)
 );
 `;
@@ -124,6 +128,7 @@ export class ResultStore {
         );
       }
     }
+    if (version === 2) this.db.exec("ALTER TABLE assertion_results ADD COLUMN score REAL");
     this.db.exec(SCHEMA);
     this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
@@ -190,10 +195,10 @@ export class ResultStore {
         );
       const trialId = Number(r.lastInsertRowid);
       const ins = this.db.prepare(
-        "INSERT INTO assertion_results (trial_id, idx, type, passed, detail) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO assertion_results (trial_id, idx, type, passed, detail, score) VALUES (?, ?, ?, ?, ?, ?)",
       );
       t.assertions.forEach((a, i) => {
-        ins.run(trialId, i, a.type, a.passed ? 1 : 0, a.detail);
+        ins.run(trialId, i, a.type, a.passed ? 1 : 0, a.detail, a.score ?? null);
       });
       this.db.exec("COMMIT");
     } catch (err) {
@@ -254,6 +259,7 @@ export class ResultStore {
         type: String(a.type) as AssertionResult["type"],
         passed: a.passed === 1,
         detail: String(a.detail),
+        score: a.score === null ? undefined : Number(a.score),
       })),
     }));
   }
