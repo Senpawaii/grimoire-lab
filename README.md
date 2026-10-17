@@ -21,13 +21,18 @@ workspaces, then compares pass rate, tokens, cost and time.
 pnpm install && pnpm build
 (cd packages/cli && npm link)
 
-# scaffold a skill (default location: .claude/skills/<name>) with a starter suite
+# scaffold a skill (default location: grimoire/skills/<name>) with a starter suite
 grimoire new pdf-extract
 
-# edit .claude/skills/pdf-extract/grimoire.bench.yaml, then:
-grimoire bench .claude/skills/pdf-extract --repeat 3 --model haiku
+# edit grimoire/skills/pdf-extract/grimoire.bench.yaml, then:
+grimoire bench grimoire/skills/pdf-extract --repeat 3 --model haiku
 grimoire report            # latest run; `report <id>` for an older one
+grimoire report --json     # the run as a BenchResult JSON document
 ```
+
+`grimoire/skills/` is the default skills directory (a local, agent-neutral grimoire). A skill in any
+other directory works the same: pass its path to `bench`, or use `--dir .claude/skills` with `new` and
+`resolve`.
 
 The link points at `packages/cli/dist`, so rerun `pnpm build` after pulling or editing the code.
 Remove it with `npm unlink -g @grimoire/cli`. Publishing to npm (for `npx`) is not set up yet.
@@ -47,10 +52,10 @@ Results land in `.grimoire/` (gitignored): `results.db` (SQLite) plus per-trial 
 
 ```sh
 # working tree vs the tag demo@1.0.0 (a bare semver means the tag <skill>@<semver>)
-grimoire bench .claude/skills/demo --against 1.0.0
+grimoire bench grimoire/skills/demo --against 1.0.0
 # vs the last commit, any branch/tag/commit, or another directory
-grimoire bench .claude/skills/demo --against HEAD
-grimoire bench .claude/skills/demo --against ../old-checkout/demo
+grimoire bench grimoire/skills/demo --against HEAD
+grimoire bench grimoire/skills/demo --against ../old-checkout/demo
 ```
 
 Both versions run the same suite (the one next to the skill you pass) and are labeled
@@ -59,6 +64,33 @@ sources are read from the repository containing the skill, at the same relative 
 touching your working tree. There is no baseline in this mode. Identical contents are rejected.
 
 A `results.db` from the first release (schema v1) is rejected with an error; delete it to start fresh.
+`report` reads runs as a `BenchResult`, so a run recorded before suite digests were stored (internal
+schema v3 or older) cannot be reported; the error says so.
+
+### Proposing a version
+
+```sh
+# benchmark an edited copy of a skill against the current one, on the current skill's suite
+grimoire propose grimoire/skills/demo --candidate ../demo-candidate --repeat 5
+```
+
+Runs the candidate (`--candidate <dir>`, a skill folder without a suite is fine) and the current skill
+as a version-vs-version comparison, prints the usual report, then the verdict of the candidate against
+the current version (pass-rate delta, `n`, infra errors, and the threshold gate it was judged by).
+Promotion is yours: the command only measures. Identical contents are rejected.
+
+### Pinning a skill
+
+```sh
+grimoire resolve pdf-extract                     # name, name@1.2.0, name@sha256:<hex> or sha256:<hex>
+grimoire resolve pdf-extract@0.1.0 --dir .claude/skills
+grimoire resolve pdf-extract@0.1.0 --git ../skills-repo --git-path grimoire/skills
+# -> pdf-extract@0.1.0 sha256:3b1f...   (the digest is the skill's identity)
+```
+
+Searches the `--dir` directory (default `grimoire/skills`) and, with `--git <repo>`, the repository's
+HEAD and `name@semver` tags under `--git-path`. Several different digests for one ref is an error:
+pin it with a digest.
 
 ## Skill format
 
@@ -159,11 +191,54 @@ pnpm add file:../grimoire-lab/packages/core
 ```
 
 Once published, `pnpm add @grimoire/core` is the same import. The stable entry point is the package
-root only:
+root only. Pin a skill from your local grimoire, benchmark it, and read the evidence:
 
 ```ts
-import { loadSkill, digestDir, runBench } from "@grimoire/core";
+import { join } from "node:path";
+import {
+  type AgentAdapter,
+  benchSkill,
+  dirSource,
+  evidenceFor,
+  loadSkillByDigest,
+  loadSuite,
+  resolveSkill,
+} from "@grimoire/core";
+
+declare const adapter: AgentAdapter; // yours: an adapter from @grimoire/adapters, or your own
+
+// 1. Pin: a loose ref becomes an exact digest (the skill's identity).
+const sources = [dirSource("grimoire/skills")]; // or ".claude/skills", or your own SkillSource
+const ref = await resolveSkill("pdf-extract@0.1.0", sources);
+
+// 2. Load exactly that content (the digest is re-checked), run it, then clean up temp files.
+const loaded = await loadSkillByDigest(ref.digest, sources);
+try {
+  const suite = await loadSuite(join(loaded.skill.dir, "grimoire.bench.yaml"));
+  const result = await benchSkill({
+    skill: loaded.skill,
+    suite,
+    adapter, // injected: core never imports an adapter
+    outDir: ".grimoire", // transcripts
+    repeat: 5,
+    signal: AbortSignal.timeout(60 * 60 * 1000), // optional; checked between trials
+  });
+
+  // 3. `result` is a plain, JSON-serializable BenchResult; evidenceFor looks up one skill's numbers.
+  const evidence = evidenceFor(result, ref);
+  console.log(evidence.score.passRate, evidence.vsBaseline?.verdict, evidence.vsBaseline?.n);
+} finally {
+  await loaded.dispose();
+}
 ```
+
+`benchSkill({ skill, suite, adapter, outDir, against?, baseline?, repeat?, model?, store?, onTrial?,
+signal? })` runs baseline vs the skill (default), or `against` vs the skill (version-vs-version, no
+baseline unless `baseline: true`, which makes three arms and three comparisons). Without a `store`
+the run is kept in a private in-memory database and the `BenchResult` is the only output; pass a
+`ResultStore` to persist it (and to keep the trials of an aborted run). `onTrial(trial, armLabel)` is
+the only progress hook. Aborting `signal` stops between trials and rejects with an `AbortError`
+(`signal.reason`); a running trial is not interrupted.
 
 Everything public is exported from `packages/core/src/index.ts`; `exports` blocks deep imports, so
 nothing under `dist/*` is API. Core never imports `@grimoire/adapters`: you pass an `AgentAdapter`
@@ -227,8 +302,16 @@ in `comparison.gate`. Five trials and a 0.1 delta is noisy with LLM agents: cons
 `proposeVersion(skill, basis, { rewriter })` stages a copy, runs your rewriter on it (for example an
 LLM-driven agent that reads the `BenchResult`), and returns `{ dir, digest, changelog, skill }`. Core
 generates no content: without a rewriter it throws `RewriterNotAvailable`, and if the rewriter changes
-nothing it throws `NoChange`. Benchmark `proposal.skill` against the current skill as a version-vs-version
-comparison, then apply your own promotion policy.
+nothing it throws `NoChange`.
+
+`benchProposal({ current, candidate, suite, adapter, outDir, baseline?, repeat?, model?, store?, onTrial?,
+signal? })` then measures the candidate (`loadSkill(dir)` of the edited copy) against `current` on the
+current skill's suite and returns `{ current, candidate, result, comparison }`: two `SkillRef`s, the
+`BenchResult`, and the `version-vs-version` `Comparison` with the candidate as `subject` and the current
+version as `reference`. `baseline: true` adds a no-skill arm (three comparisons in `result`). Identical
+digests throw. Core never promotes anything: read `comparison.deltas`, `n` and `verdict`, apply your
+own policy, and move the candidate into your own store if you accept it. The type is named
+`BenchProposal` (not `Proposal`, which is what `proposeVersion` returns).
 
 ## Releasing
 

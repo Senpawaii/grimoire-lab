@@ -2,10 +2,10 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSkill, loadSuite, ResultStore } from "@grimoire/core";
+import { type BenchResult, loadSkill, loadSuite, ResultStore } from "@grimoire/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createProgram } from "./program.js";
-import { scaffoldSkill } from "./scaffold.js";
+import { DEFAULT_SKILLS_DIR, scaffoldSkill } from "./scaffold.js";
 
 let tmp: string;
 beforeEach(async () => {
@@ -27,6 +27,19 @@ describe("scaffoldSkill", () => {
     await expect(scaffoldSkill("../escape", tmp)).rejects.toThrow(/kebab-case/);
     await scaffoldSkill("dup", tmp);
     await expect(scaffoldSkill("dup", tmp)).rejects.toThrow(/already exists/);
+  });
+});
+
+describe("default skills directory", () => {
+  it("is grimoire/skills for `new` and `resolve` (.claude/skills stays usable via --dir)", () => {
+    expect(DEFAULT_SKILLS_DIR).toBe(join("grimoire", "skills"));
+    const program = createProgram();
+    for (const name of ["new", "resolve"]) {
+      const dir = program.commands
+        .find((c) => c.name() === name)
+        ?.options.find((o) => o.long === "--dir");
+      expect(dir?.defaultValue).toBe(DEFAULT_SKILLS_DIR);
+    }
   });
 });
 
@@ -60,6 +73,9 @@ describe("commands", () => {
     const id = store.createRun({
       suite: "s",
       agent: "claude-code",
+      suiteDigest: "sha256:suite",
+      taskIds: ["t"],
+      repeat: 1,
       variants: [
         { label: "baseline" },
         { label: "with-skill", skillName: "demo", skillDigest: "sha256:0000000000000000000" },
@@ -69,6 +85,40 @@ describe("commands", () => {
     expect(await run([])).toContain("with-skill: demo");
     expect(await run([String(id)])).toContain(`run ${id}`);
     await expect(run(["99"])).rejects.toThrow(/No run with id 99/);
+
+    const json = JSON.parse(await run(["--json"])) as BenchResult;
+    expect(json).toMatchObject({
+      schemaVersion: 1,
+      id: String(id),
+      suite: { name: "s", digest: "sha256:suite", taskIds: ["t"] },
+    });
+    expect(json.arms.map((a) => a.label)).toEqual(["baseline", "with-skill"]);
+    expect(JSON.parse(await run([String(id), "--json"]))).toEqual(json);
+    await expect(run(["99", "--json"])).rejects.toThrow(/No run with id 99/);
+  });
+
+  it("`report --json` prints exactly what the store reads back", async () => {
+    const out = join(tmp, "out2");
+    const store = new ResultStore(join(out, "results.db"));
+    store.createRun({
+      suite: "s",
+      agent: "a",
+      suiteDigest: "sha256:suite",
+      taskIds: ["t"],
+      variants: [{ label: "baseline" }, { label: "x", skillName: "x", skillDigest: "sha256:1" }],
+    });
+    const expected = store.latestResult();
+    store.close();
+    const lines: string[] = [];
+    await createProgram((l) => lines.push(l)).parseAsync([
+      "node",
+      "grimoire",
+      "report",
+      "--json",
+      "--out",
+      out,
+    ]);
+    expect(JSON.parse(lines.join("\n"))).toEqual(expected);
   });
 
   it("`bench` rejects an unknown agent before running anything", async () => {

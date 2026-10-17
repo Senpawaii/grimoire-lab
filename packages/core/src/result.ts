@@ -221,7 +221,8 @@ export function scoreTrials(trials: TrialResult[]): Score {
   };
 }
 
-function toTrialResult(t: TrialRecord): TrialResult {
+/** Maps a stored trial to its result form (the variant label is carried by the arm instead). */
+export function toTrialResult(t: TrialRecord): TrialResult {
   return {
     taskId: t.taskId,
     repeatIdx: t.repeatIdx,

@@ -1,4 +1,4 @@
-import type { RunRecord, TrialRecord } from "./store.js";
+import type { ArmResult, BenchResult, TrialResult } from "./result.js";
 
 export interface VariantSummary {
   variant: string;
@@ -16,36 +16,31 @@ export function mean(values: number[]): number | undefined {
 }
 
 /**
- * One summary per variant, in `order` (default: first appearance). Errored and timed-out trials
- * count as failures; means skip trials that lack the metric.
+ * One summary per arm, in run order. Errored and timed-out trials count as failures; means skip
+ * trials that lack the metric. Arms with no trials are skipped.
  */
-export function summarize(
-  trials: TrialRecord[],
-  order: string[] = [...new Set(trials.map((t) => t.variant))],
-): VariantSummary[] {
-  return order
-    .map((variant) => ({ variant, ts: trials.filter((t) => t.variant === variant) }))
-    .filter(({ ts }) => ts.length > 0)
-    .map(({ variant, ts }) => ({
-      variant,
-      trials: ts.length,
-      passes: ts.filter((t) => t.passed).length,
-      meanTokens: mean(ts.flatMap((t) => (t.tokens === undefined ? [] : [t.tokens]))),
-      meanDurationMs: mean(ts.map((t) => t.durationMs)) ?? 0,
-      meanCostUsd: mean(ts.flatMap((t) => (t.costUsd === undefined ? [] : [t.costUsd]))),
-      meanJudgeScore: mean(
-        ts.flatMap((t) => t.assertions.flatMap((a) => (a.score === undefined ? [] : [a.score]))),
-      ),
+export function summarize(result: BenchResult): VariantSummary[] {
+  return result.arms
+    .filter((arm) => arm.score.trials > 0)
+    .map(({ label, score }) => ({
+      variant: label,
+      trials: score.trials,
+      passes: score.passes,
+      meanTokens: score.meanTokens,
+      meanDurationMs: score.meanDurationMs,
+      meanCostUsd: score.meanCostUsd,
+      meanJudgeScore: score.meanJudgeScore,
     }));
 }
 
-const mark = (t: TrialRecord) => (t.passed ? "✓" : t.status === "completed" ? "✗" : "!");
+const mark = (t: TrialResult) => (t.passed ? "✓" : t.status === "completed" ? "✗" : "!");
 
-export function formatTrialLine(t: TrialRecord): string {
+/** One progress line for a trial of the arm labeled `arm`. */
+export function formatTrialLine(t: TrialResult, arm: string): string {
   const failed = t.assertions.filter((a) => !a.passed).map((a) => a.detail);
   const why =
     t.status !== "completed" ? `${t.status}${t.error ? `: ${t.error}` : ""}` : failed.join("; ");
-  return `[${t.variant}] ${t.taskId} #${t.repeatIdx} ${mark(t)}${why ? `  ${why}` : ""}`;
+  return `[${arm}] ${t.taskId} #${t.repeatIdx} ${mark(t)}${why ? `  ${why}` : ""}`;
 }
 
 const fmtTokens = (n?: number) =>
@@ -63,34 +58,36 @@ function pad(rows: string[][]): string[] {
   );
 }
 
-export function formatReport(run: RunRecord, trials: TrialRecord[]): string {
+function describeArm(arm: ArmResult): string {
+  if (!arm.skill) return `  ${arm.label}: no skill`;
+  const { name, version, digest } = arm.skill;
+  const ref = `${name}${version ? `@${version}` : ""}`;
+  const short = digest.slice(0, 19);
+  return `  ${arm.label}: ${ref === arm.label ? short : `${ref} (${short})`}`;
+}
+
+export function formatReport(result: BenchResult): string {
+  const agent = result.arms[0]?.agent;
   const lines = [
-    `suite ${run.suite} · agent ${run.agent}${run.agentVersion ? ` ${run.agentVersion}` : ""}${run.model ? ` · model ${run.model}` : ""}`,
-    `run ${run.id} · ${run.startedAt}`,
-    ...run.variants.map((v) => {
-      if (!v.skillName) return `  ${v.label}: no skill`;
-      const ref = `${v.skillName}${v.skillVersion ? `@${v.skillVersion}` : ""}`;
-      const digest = (v.skillDigest ?? "").slice(0, 19);
-      return `  ${v.label}: ${ref === v.label ? digest : `${ref} (${digest})`}`;
-    }),
+    `suite ${result.suite.name} · agent ${agent?.id ?? ""}${agent?.version ? ` ${agent.version}` : ""}${agent?.model ? ` · model ${agent.model}` : ""}`,
+    `run ${result.id} · ${result.startedAt}`,
+    ...result.arms.map(describeArm),
     "",
   ];
 
-  const taskIds = [...new Set(trials.map((t) => t.taskId))];
-  const summaries = summarize(
-    trials,
-    run.variants.map((v) => v.label),
-  );
+  const taskIds = [...new Set(result.arms.flatMap((a) => a.tasks.map((t) => t.taskId)))];
+  const summaries = summarize(result);
   const perTask = taskIds.flatMap((id) =>
-    summaries.map(({ variant }) => [
-      `[${variant}]`,
-      id,
-      trials
-        .filter((t) => t.taskId === id && t.variant === variant)
-        .sort((a, b) => a.repeatIdx - b.repeatIdx)
-        .map(mark)
-        .join(" "),
-    ]),
+    result.arms
+      .filter((arm) => arm.score.trials > 0)
+      .map((arm) => [
+        `[${arm.label}]`,
+        id,
+        [...(arm.tasks.find((t) => t.taskId === id)?.trials ?? [])]
+          .sort((a, b) => a.repeatIdx - b.repeatIdx)
+          .map(mark)
+          .join(" "),
+      ]),
   );
   lines.push(...pad(perTask), "");
 

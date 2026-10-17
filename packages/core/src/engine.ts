@@ -21,6 +21,12 @@ export interface BenchOptions {
   repeat?: number;
   model?: string;
   onTrial?: (trial: TrialRecord) => void;
+  /**
+   * Checked before the run is created and between trials (a running trial is not interrupted).
+   * On abort `runBench` rejects with `signal.reason` (an `AbortError` for a plain `abort()`);
+   * trials already stored stay in the store.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -112,6 +118,7 @@ async function runTrial(
  * interleaved within each repeat so drift (rate limits, load) hits all of them equally.
  */
 export async function runBench(o: BenchOptions): Promise<number> {
+  o.signal?.throwIfAborted();
   const labels = o.variants.map((v) => v.label);
   if (labels.length < 2) throw new Error("A benchmark needs at least two variants to compare");
   if (new Set(labels).size !== labels.length) {
@@ -146,6 +153,7 @@ export async function runBench(o: BenchOptions): Promise<number> {
   for (const task of o.suite.tasks) {
     for (let i = 1; i <= repeat; i++) {
       for (const variant of o.variants) {
+        o.signal?.throwIfAborted();
         const trial = await runTrial(o, task, variant, i, runDir, runRel);
         o.store.addTrial(runId, trial);
         o.onTrial?.(trial);

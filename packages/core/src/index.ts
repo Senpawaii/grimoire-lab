@@ -1,6 +1,13 @@
 export { type ResolvedAgainst, resolveAgainst } from "./against.js";
 export { type AssertionContext, type AssertionResult, evaluateAssertion } from "./assertions.js";
 export {
+  type BenchProposal,
+  type BenchProposalOptions,
+  type BenchSkillOptions,
+  benchProposal,
+  benchSkill,
+} from "./bench.js";
+export {
   type ArmRef,
   armRef,
   type CompareOptions,
