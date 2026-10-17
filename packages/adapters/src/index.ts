@@ -1,14 +1,38 @@
 import type { AgentAdapter } from "@grimoire/core";
 import { claudeCode } from "./claude-code.js";
+import { createCommandAdapter, parseCommandConfig } from "./command.js";
 
 export { claudeCode, parseStreamJson } from "./claude-code.js";
+export {
+  type CommandAdapterConfig,
+  CommandAdapterConfigSchema,
+  createCommandAdapter,
+  loadCommandConfig,
+  PROMPT_PLACEHOLDER,
+  parseCommandConfig,
+} from "./command.js";
 
-const ADAPTERS: Record<string, AgentAdapter> = { [claudeCode.id]: claudeCode };
+export interface GetAdapterOptions {
+  /** Adapter configuration; required by (and only used for) the `command` adapter. */
+  config?: unknown;
+}
 
-export function getAdapter(id: string): AgentAdapter {
-  const adapter = ADAPTERS[id];
-  if (!adapter) {
+const ADAPTERS: Record<string, (opts: GetAdapterOptions) => AgentAdapter> = {
+  [claudeCode.id]: () => claudeCode,
+  command: (opts) => {
+    if (opts.config === undefined) {
+      throw new Error(
+        'The "command" agent needs a config (programmatic: getAdapter("command", { config }); CLI: --agent-config <file>)',
+      );
+    }
+    return createCommandAdapter(parseCommandConfig(opts.config));
+  },
+};
+
+export function getAdapter(id: string, opts: GetAdapterOptions = {}): AgentAdapter {
+  const factory = ADAPTERS[id];
+  if (!factory) {
     throw new Error(`Unknown agent "${id}". Available: ${Object.keys(ADAPTERS).join(", ")}`);
   }
-  return adapter;
+  return factory(opts);
 }

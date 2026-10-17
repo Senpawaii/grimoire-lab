@@ -14,6 +14,17 @@ All notable changes to `@grimoire/core` (and the CLI built on it). Format follow
 
 ## Unreleased
 
+### Added
+
+- Generic `command` adapter (#29): `createCommandAdapter(config)` in `@grimoire/adapters` runs any CLI as
+  the agent (`command`, `args` with a `{prompt}` placeholder or `promptVia: stdin`, `env`, `skillDir`,
+  `detect`, `modelArg`, `maxOutputChars`, `id`). Final message is stdout; exit 0 is `completed`, timeout is
+  `timeout`, a missing executable is an infrastructure error, a non-zero exit is an agent error; no usage
+  data. `skill_loaded` fails for it (no transcript tool events). Registered as `command`:
+  `getAdapter(id, { config? })` takes an optional config (existing callers unchanged), plus
+  `loadCommandConfig`/`parseCommandConfig`. CLI: `--agent command --agent-config <file.json|yaml>` on
+  `bench`, `propose` and `resume`. See the README section "Other agents (command adapter)".
+
 ## 0.2.0 - 2026-10-18
 
 ### Added

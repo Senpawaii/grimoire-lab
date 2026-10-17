@@ -5,7 +5,7 @@ Benchmark agent skills. Does a skill actually beat the same agent without it?
 `grimoire bench` runs a skill's task suite twice, with the skill installed and without, in throwaway
 workspaces, then compares pass rate, tokens, cost and time.
 
-> Status: early. One agent (Claude Code). Comparisons: skill vs. no-skill baseline, and skill
+> Status: early. Claude Code, plus any other CLI through the generic command adapter. Comparisons: skill vs. no-skill baseline, and skill
 > version vs. skill version.
 > Planned: agent-vs-agent, an LLM judge, more adapters.
 
@@ -201,6 +201,84 @@ Limits:
   you pass `--concurrency`; parallel trials share your plan's rate limits and the machine, so a large
   value can add infrastructure errors and timeouts that a sequential run would not see.
 - Benchmarks consume your Claude plan's usage limits.
+
+## Other agents (command adapter)
+
+The `command` adapter runs any CLI as the agent, so you can benchmark agents other than Claude Code.
+It is configured with a small JSON or YAML file:
+
+```sh
+grimoire bench grimoire/skills/pdf-extract --agent command --agent-config agent.yaml
+```
+
+`--agent-config` is accepted by `bench`, `propose` and `resume` and requires `--agent command` (for
+`resume`, passing `--agent-config` alone implies it; the config's `id` must equal the run's agent).
+Programmatically: `createCommandAdapter(config)` or `getAdapter("command", { config })` from
+`@grimoire/adapters`.
+
+> **Untested example.** The config below shows the shape for an OpenAI Codex-style CLI. The flags and
+> the skills directory are illustrative and have not been run against a real Codex install: check your
+> agent's own documentation.
+
+```yaml
+id: codex                    # stored as the agent id in results (default: command)
+command: codex               # executable, spawned directly (no shell)
+args: [exec, "{prompt}"]     # {prompt} is replaced by the task prompt
+detect: codex --version      # availability probe; first output line is recorded as the version
+skillDir: .codex/skills      # workspace-relative dir the skill is copied into
+modelArg: --model            # optional: how --model reaches the agent
+env:                         # added to the environment grimoire inherits
+  CODEX_HOME: /tmp/grimoire-codex-home
+```
+
+| Field | Meaning |
+| --- | --- |
+| `command` | Required. Executable; run without a shell (on Windows, `.cmd`/`.exe` shims on `PATH` work). |
+| `args` | Argument list. `{prompt}` is substituted inside every element that contains it. Required (somewhere) unless `promptVia: stdin`. |
+| `promptVia` | `arg` (default) or `stdin`. With `stdin` the prompt is written to the agent's stdin and `{prompt}` is not allowed in `args`. |
+| `env` | Extra environment variables. The agent inherits grimoire's whole environment; these are added on top and win on conflict. |
+| `skillDir` | Workspace-relative directory (not absolute, no `..`) the skill folder is copied into as `<skillDir>/<skill name>/` in the with-skill cell (the suite and fixtures are left out). Omit it for agents without skill support. |
+| `detect` | Command line (whitespace-split string, or an argv array for paths with spaces) run before a bench. Exit 0 means available; the first output line is recorded as the agent version. Omitted: the agent is assumed available and a missing executable shows up as an infrastructure error per trial. |
+| `modelArg` | Optional, e.g. `--model`. See "model and tools" below. |
+| `maxOutputChars` | Cap on stdout and on stderr, in characters (default 10,000,000). |
+| `id` | Optional adapter id recorded in results. Compare runs of the same agent under the same id. |
+
+What a trial does: the agent runs in the trial workspace with the suite's timeout, with stdin closed
+unless `promptVia: stdin`.
+
+| Outcome | `status` | Counts against the skill? |
+| --- | --- | --- |
+| Exit code 0 | `completed`; final message = stdout, transcript = one assistant message holding stdout | |
+| Non-zero exit, killed by a signal, or output over `maxOutputChars` (the agent is stopped) | `error`, `errorKind: agent` | yes |
+| Timeout | `timeout` | yes |
+| Executable not found / cannot be spawned | `error`, `errorKind: infrastructure` | no (inconclusive) |
+
+Design decisions:
+
+- **Prompt substitution is argv replacement.** The prompt becomes one argument; it is never
+  interpolated into a shell command, so quotes, `$(...)`, backticks and newlines in a prompt cannot
+  inject commands. Mind the agent's own parsing: a prompt starting with `-` can look like a flag (put
+  a `--` before `{prompt}` in `args` if the agent supports it), and Windows limits a command line to
+  about 32k characters (use `promptVia: stdin` for long prompts).
+- **Environment.** The agent inherits the full environment of the `grimoire` process plus `env`.
+  Unlike Claude Code there is no isolation: the agent's own configuration (skills, memory, hooks) can
+  leak into the baseline. Point the agent's config-home variable at a scratch directory through `env`
+  if it has one.
+- **`model` and `tools` are ignored by default.** `--model` is only used when the config declares
+  `modelArg`: then `[modelArg, model]` is appended after `args` (the model argument is a separate
+  argv element, so `--model=x` forms are not supported). Without `modelArg` the model is not passed
+  and results do not record one. A suite task's `tools` restriction is never passed: tool restriction
+  is agent-specific, so a task that depends on it cannot be enforced through this adapter.
+- **No token or cost data.** `usage` is undefined, so `max` assertions on `tokens`/`costUsd` fail
+  with "agent reported no ..." and the report shows no tokens or cost for these runs.
+- **`skill_loaded` cannot be evaluated.** The adapter has no transcript tool events, so it never
+  emits a `skill_loaded` event: in the with-skill cell the assertion fails
+  (`skill "<name>" was never invoked`); in the baseline cell it is skipped as always. Do not use
+  `skill_loaded` in suites you run through this adapter, and judge on outcomes (files, commands)
+  instead. `transcript_contains` only sees the agent's stdout.
+- **No skill support = no skill-vs-baseline.** Without `skillDir` the install step does nothing, the
+  two arms are identical, and a skill-vs-baseline comparison is meaningless (the CLI prints a
+  warning). Such an agent is only useful as an agent-vs-agent data point on the same suite.
 
 ## Using as a library
 
@@ -403,10 +481,10 @@ pnpm coverage:changed [base]   # per-file >= 90% lines/statements/functions for 
 ```
 
 Packages: `@grimoire/core` (skill/suite parsing, assertions, engine, SQLite store, report),
-`@grimoire/adapters` (agent adapters; Claude Code), `@grimoire/cli`.
+`@grimoire/adapters` (agent adapters; Claude Code and the generic command adapter), `@grimoire/cli`.
 
 Adding an agent means implementing `AgentAdapter` from `@grimoire/core` (`detect`, `install`, `run`)
-and registering it in `packages/adapters/src/index.ts`.
+and registering it in `packages/adapters/src/index.ts`. For a CLI agent, the command adapter needs no code.
 
 ## License
 
