@@ -144,6 +144,92 @@ Limits:
 - Trials are non-deterministic and run sequentially; small repeat counts give noisy pass rates.
 - Benchmarks consume your Claude plan's usage limits.
 
+## Using as a library
+
+`@grimoire/core` is an ESM package with bundled types (Node 22.13+). It is not published to npm yet;
+install it from a clone or from git:
+
+```sh
+# from a local clone: build, then pack and install the tarball (what CI's smoke test does)
+pnpm build && pnpm --filter @grimoire/core pack --pack-destination /tmp
+pnpm add /tmp/grimoire-core-<version>.tgz
+
+# or link the built package directly
+pnpm add file:../grimoire-lab/packages/core
+```
+
+Once published, `pnpm add @grimoire/core` is the same import. The stable entry point is the package
+root only:
+
+```ts
+import { loadSkill, digestDir, runBench } from "@grimoire/core";
+```
+
+Everything public is exported from `packages/core/src/index.ts`; `exports` blocks deep imports, so
+nothing under `dist/*` is API. Core never imports `@grimoire/adapters`: you pass an `AgentAdapter`
+instance. See [docs/design/library-api.md](docs/design/library-api.md) for the full API.
+
+**Version policy.** While the version is `0.x`, a minor bump may contain breaking changes and a
+patch bump is fixes only. The benchmark result `schemaVersion` is versioned separately from the
+package: additive optional fields do not bump it, a rename/removal/semantic change does. `1.0.0`
+ships once the library API in the design doc is stable. See [CHANGELOG.md](CHANGELOG.md).
+
+### Results
+
+A benchmark run reads back as a plain, JSON-serializable `BenchResult` (`store.getResult(id)` /
+`store.latestResult()`, or `buildBenchResult(run, trials, { suite })`). It records the agent, each arm's
+skill ref (`name`, `version`, `digest`), the suite digest (`digestSuite`), per-task and overall `Score`s,
+every trial, and the comparisons computed inside the run. Persist it as JSON and re-validate on read with
+`parseBenchResult`.
+
+**Stability promise.** Every result carries a literal `schemaVersion` (currently `1`). Adding an optional
+field does not bump it, so readers must ignore fields they do not know (`parseBenchResult` strips them).
+Renaming or removing a field, making an optional one required, or changing what a field means (for example
+what `passRate` is computed over) bumps it. `parseBenchResult` accepts only known versions and throws for
+the rest. A golden fixture per version is checked in. The SQLite schema behind `ResultStore` is internal
+and versioned independently.
+
+`passRate` is passes over *all* trials, so errors and timeouts count as failures. Each trial also carries
+`infraError` (adapter crash, rate limit, or a failed judge call; adapters can set `RunResult.errorKind`
+to `"agent"` to say the agent itself failed) and `Score.errors` counts them. A timeout is a skill failure,
+not an infra error. Treat a high `errors / trials` as inconclusive, not as a low score.
+
+### Comparing results
+
+```ts
+import { armRef, compare, evidenceFor } from "@grimoire/core";
+
+const c = compare(armRef(candidate, "demo@1.1.0"), armRef(baseline, { digest: oldDigest }), {
+  minTrials: 20,
+  tolerance: 0.15,
+});
+c.verdict; // "better" | "same" | "worse"
+evidenceFor(result, skillRef); // score + vsBaseline / vsPrevious comparisons for one skill
+```
+
+`compare(subject, reference, opts?)` takes arms (from any results, runs or machines) and throws
+`SuiteMismatch` if their suite digests differ and `IncomparableArms` if the arms differ in more than one
+way. It returns the deltas (subject minus reference), per-task deltas, `n` with error counts, and a `kind`
+(`skill-vs-baseline`, `version-vs-version`, `agent-vs-agent`).
+
+`significant` and `verdict` come from a **threshold gate, not a statistical test**: there is no p-value and
+no confidence interval. `significant` is true when both sides have at least `minTrials` countable trials
+(pooled over all tasks; default 5) and the pass-rate delta is at least `tolerance` in absolute value
+(default 0.1). `verdict` is `same` unless `significant`, then `better` or `worse` by the sign of the delta.
+With `excludeInfraErrors` (default true) the gate uses `passes / (trials - errors)` and counts only
+countable trials; `deltas` always use the plain `passRate`. The rule that produced a verdict is recorded
+in `comparison.gate`. Five trials and a 0.1 delta is noisy with LLM agents: consumers must set their own
+`minTrials`/`tolerance` (or compute an interval from `TaskResult.trials`) before auto-promoting anything.
+
+### Proposing a version
+
+`stageCandidate(skill, dir, { version? })` copies a skill (without its suite) into `dir`.
+`proposeVersion(skill, basis, { rewriter })` stages a copy, runs your rewriter on it (for example an
+LLM-driven agent that reads the `BenchResult`), and returns `{ dir, digest, changelog, skill }`. Core
+generates no content: without a rewriter it throws `RewriterNotAvailable`, and if the rewriter changes
+nothing it throws `NoChange`. Benchmark `proposal.skill` against the current skill as a version-vs-version
+comparison, then apply your own promotion policy.
+
 ## Development
 
 ```sh

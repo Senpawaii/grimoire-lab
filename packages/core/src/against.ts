@@ -11,20 +11,30 @@ export interface ResolvedAgainst {
   cleanup(): Promise<void>;
 }
 
-const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+export const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 async function git(cwd: string, args: string[]) {
   return execa("git", args, { cwd, reject: false });
 }
 
-/** Exports the tree under `cwd` at `commit` into `dest`, without touching the work tree or index. */
-async function exportTree(cwd: string, commit: string, dest: string): Promise<number> {
-  const ls = await execa("git", ["ls-tree", "-r", "-z", commit, "--", "."], { cwd });
+/**
+ * Exports the tree under `cwd` (or its `subdir`, relative to `cwd`) at `commit` into `dest`,
+ * without touching the work tree or index. Paths are written relative to `subdir`.
+ */
+export async function exportTree(
+  cwd: string,
+  commit: string,
+  dest: string,
+  subdir = ".",
+): Promise<number> {
+  const spec = subdir === "." ? "." : `${subdir.replace(/\/+$/, "")}/`;
+  const ls = await execa("git", ["ls-tree", "-r", "-z", commit, "--", spec], { cwd });
   const entries = String(ls.stdout).split("\0").filter(Boolean);
   for (const entry of entries) {
     const tab = entry.indexOf("\t");
     const [mode, , sha] = entry.slice(0, tab).split(" ");
-    const path = entry.slice(tab + 1);
+    const full = entry.slice(tab + 1);
+    const path = spec === "." ? full : full.slice(spec.length);
     if (mode !== "100644" && mode !== "100755") {
       throw new Error(
         `${path} at ${commit.slice(0, 10)} is a symlink or submodule; not supported in a skill`,

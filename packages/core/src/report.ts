@@ -11,7 +11,7 @@ export interface VariantSummary {
   meanJudgeScore?: number;
 }
 
-function mean(values: number[]): number | undefined {
+export function mean(values: number[]): number | undefined {
   return values.length === 0 ? undefined : values.reduce((a, b) => a + b, 0) / values.length;
 }
 

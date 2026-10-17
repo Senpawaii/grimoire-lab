@@ -102,6 +102,13 @@ describe("runBench with a judge", () => {
     expect(seen[0]?.assertions[1]).toMatchObject({ type: "judge", passed: false });
   });
 
+  it("flags a judge that cannot deliver a verdict as an infra error, but not a low score", async () => {
+    const { a } = adapter({ verdicts: ["no idea", '{"score": 1, "reasoning": "bad"}'] });
+    const { seen, store, runId } = await bench(a);
+    expect(seen.map((t) => t.infraError)).toEqual([true, false]);
+    expect(store.listTrials(runId).map((t) => t.infraError)).toEqual([true, false]);
+  });
+
   it("skips the judge for trials where the agent did not complete", async () => {
     const { a, judgeRequests } = adapter({ verdicts: [], taskStatus: "timeout" });
     const { seen } = await bench(a);

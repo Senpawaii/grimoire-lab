@@ -68,3 +68,78 @@ describe("schema v2 to v3", () => {
     expect(() => new ResultStore(path).close()).not.toThrow();
   });
 });
+
+/** The v3 layout: v4 added runs.suite_digest/suite_task_ids/repeat and trials.infra_error. */
+function createV3(path: string) {
+  const db = new DatabaseSync(path);
+  db.exec(`
+    CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT, suite TEXT NOT NULL, agent TEXT NOT NULL,
+      agent_version TEXT, model TEXT, started_at TEXT NOT NULL);
+    CREATE TABLE variants (run_id INTEGER NOT NULL, idx INTEGER NOT NULL, label TEXT NOT NULL,
+      skill_name TEXT, skill_version TEXT, skill_digest TEXT, PRIMARY KEY (run_id, idx));
+    CREATE TABLE trials (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL, variant TEXT NOT NULL,
+      task_id TEXT NOT NULL, repeat_idx INTEGER NOT NULL, status TEXT NOT NULL, passed INTEGER NOT NULL,
+      tokens INTEGER, cost_usd REAL, duration_ms INTEGER NOT NULL, final_message TEXT NOT NULL,
+      error TEXT, transcript_path TEXT NOT NULL);
+    CREATE TABLE assertion_results (trial_id INTEGER NOT NULL, idx INTEGER NOT NULL, type TEXT NOT NULL,
+      passed INTEGER NOT NULL, detail TEXT NOT NULL, score REAL, PRIMARY KEY (trial_id, idx));
+    INSERT INTO runs VALUES (1, 'v3-suite', 'claude-code', NULL, NULL, '2026-10-10T00:00:00.000Z');
+    INSERT INTO variants VALUES (1, 0, 'baseline', NULL, NULL, NULL);
+    INSERT INTO trials VALUES (1, 1, 'baseline', 't', 1, 'error', 0, NULL, NULL, 10, '', 'boom', 'p');
+    PRAGMA user_version = 3;
+  `);
+  db.close();
+}
+
+describe("schema v3 to v4", () => {
+  it("keeps old runs readable with the new fields absent, refuses them as results, and stores new ones", () => {
+    const path = join(dir, "v3.db");
+    createV3(path);
+
+    const store = new ResultStore(path);
+    expect(store.getRun(1)).toMatchObject({
+      suite: "v3-suite",
+      suiteDigest: undefined,
+      taskIds: undefined,
+      repeat: undefined,
+    });
+    expect(store.listTrials(1)[0]?.infraError).toBeUndefined();
+    expect(() => store.getResult(1)).toThrow(/before suite digests/);
+
+    const id = store.createRun({
+      suite: "new",
+      agent: "a",
+      suiteDigest: "sha256:abc",
+      taskIds: ["t"],
+      repeat: 1,
+      variants: [{ label: "baseline" }],
+    });
+    store.addTrial(id, {
+      variant: "baseline",
+      taskId: "t",
+      repeatIdx: 1,
+      status: "completed",
+      passed: false,
+      infraError: false,
+      durationMs: 1,
+      finalMessage: "",
+      transcriptPath: "p",
+      assertions: [],
+    });
+    expect(store.getRun(id)).toMatchObject({
+      suiteDigest: "sha256:abc",
+      taskIds: ["t"],
+      repeat: 1,
+    });
+    expect(store.listTrials(id)[0]?.infraError).toBe(false);
+    expect(store.getResult(id)?.suite.digest).toBe("sha256:abc");
+    store.close();
+  });
+
+  it("is idempotent: reopening a migrated v3 database does not fail", () => {
+    const path = join(dir, "v3.db");
+    createV3(path);
+    new ResultStore(path).close();
+    expect(() => new ResultStore(path).close()).not.toThrow();
+  });
+});

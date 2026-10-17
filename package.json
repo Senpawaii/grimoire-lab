@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc -b",
+    "smoke:consume": "node scripts/smoke-consume.mjs",
     "test": "vitest run",
     "coverage:changed": "node scripts/coverage-changed.mjs",
     "lint": "biome check .",

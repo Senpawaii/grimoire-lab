@@ -1,10 +1,72 @@
 export { type ResolvedAgainst, resolveAgainst } from "./against.js";
 export { type AssertionContext, type AssertionResult, evaluateAssertion } from "./assertions.js";
+export {
+  type ArmRef,
+  armRef,
+  type CompareOptions,
+  compare,
+  DEFAULT_GATE,
+  deriveKind,
+  evidenceFor,
+  IncomparableArms,
+  type SkillEvidence,
+  SuiteMismatch,
+} from "./compare.js";
 export { digestDir } from "./digest.js";
 export { type BenchOptions, runBench } from "./engine.js";
 export { buildJudgePrompt, type JudgeInput, parseVerdict, runJudge } from "./judge.js";
+export {
+  NoChange,
+  type Proposal,
+  type ProposeOptions,
+  proposeVersion,
+  RewriterNotAvailable,
+  type SkillRewriter,
+  type StageOptions,
+  stageCandidate,
+} from "./propose.js";
 export { formatReport, formatTrialLine, summarize, type VariantSummary } from "./report.js";
+export {
+  type AgentInfo,
+  type ArmResult,
+  ArmResultSchema,
+  type AssertionOutcome,
+  type BenchResult,
+  BenchResultSchema,
+  type BuildResultContext,
+  buildBenchResult,
+  type Comparison,
+  ComparisonSchema,
+  type Gate,
+  GateSchema,
+  KNOWN_SCHEMA_VERSIONS,
+  parseBenchResult,
+  SCHEMA_VERSION,
+  type Score,
+  ScoreSchema,
+  scoreTrials,
+  type TaskResult,
+  TaskResultSchema,
+  type TrialResult,
+  TrialResultSchema,
+} from "./result.js";
 export { loadSkill, splitFrontmatter } from "./skill.js";
+export {
+  AmbiguousSkill,
+  DigestMismatch,
+  dirSource,
+  gitSource,
+  type LoadedSkill,
+  listSkills,
+  load,
+  loadSkillByDigest,
+  resolve,
+  resolveSkill,
+  type SkillListing,
+  SkillNotFound,
+  type SkillRef,
+  type SkillSource,
+} from "./sources.js";
 export {
   ResultStore,
   type RunMeta,
@@ -20,6 +82,7 @@ export {
   type ResolvedTask,
   type Suite,
 } from "./suite.js";
+export { digestSuite } from "./suite-digest.js";
 export type {
   AgentAdapter,
   RunRequest,
