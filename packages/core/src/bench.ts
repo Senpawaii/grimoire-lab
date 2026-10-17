@@ -1,5 +1,5 @@
 import { armRef, compare } from "./compare.js";
-import { runBench } from "./engine.js";
+import { resumeRun, runBench } from "./engine.js";
 import { type BenchResult, type Comparison, type TrialResult, toTrialResult } from "./result.js";
 import type { SkillRef } from "./sources.js";
 import { ResultStore } from "./store.js";
@@ -28,11 +28,21 @@ export interface BenchSkillOptions {
    * caller owns, and closes, a store it passes in.
    */
   store?: ResultStore;
+  /**
+   * Trials in flight at once: a positive integer, default 1 (sequential); anything else throws a
+   * `RangeError` before running. Trials start in the order task, repeat, variant (so arms stay
+   * interleaved within each repeat) but finish in completion order, which is also the order of
+   * `onTrial` calls. The `BenchResult` has the same shape and ordering either way. The adapter
+   * must tolerate that many simultaneous runs; each trial has its own workspace.
+   */
+  concurrency?: number;
   /** The only progress hook: called after every trial with the label of the arm it ran on. */
   onTrial?: (trial: TrialResult, arm: string) => void;
   /**
-   * The only cancellation mechanism. Checked between trials; the returned promise rejects with
-   * `signal.reason` (an `AbortError` for a plain `abort()`).
+   * The only cancellation mechanism. Checked before the run is created and before each trial
+   * starts; trials already running are not interrupted: they finish and are stored, then the
+   * returned promise rejects with `signal.reason` (an `AbortError` for a plain `abort()`). With a
+   * `store`, `resumeBench` can finish the run afterwards.
    */
   signal?: AbortSignal;
 }
@@ -66,6 +76,7 @@ export async function benchSkill(o: BenchSkillOptions): Promise<BenchResult> {
       outDir: o.outDir,
       repeat: o.repeat,
       model: o.model,
+      concurrency: o.concurrency,
       signal: o.signal,
       onTrial: onTrial && ((t) => onTrial(toTrialResult(t), t.variant)),
     });
@@ -114,4 +125,53 @@ export async function benchProposal(o: BenchProposalOptions): Promise<BenchPropo
     result,
     comparison: compare(armRef(result, candidate), armRef(result, current)),
   };
+}
+
+export interface ResumeBenchOptions {
+  /** Id of a run in `store` (`RunRecord.id`, `BenchResult.id`). */
+  runId: number;
+  /** The caller owns, and closes, the store holding the run. */
+  store: ResultStore;
+  /** Must still hash to the digest stored with the run. */
+  suite: Suite;
+  /**
+   * Every skill version the run used, freshly loaded (see `loadSkillByDigest`); matched to the
+   * run's arms by digest. Extra skills are ignored.
+   */
+  skills: Skill[];
+  /** Must be the agent the run used. The model and repeat count come from the run. */
+  adapter: AgentAdapter;
+  /** Transcripts and raw logs of the new trials go under `<outDir>/runs/<runId>/`. */
+  outDir: string;
+  /** Trials in flight at once, see `BenchSkillOptions.concurrency`. Default 1. */
+  concurrency?: number;
+  /** Called for the newly run trials only, with the label of the arm each ran on. */
+  onTrial?: (trial: TrialResult, arm: string) => void;
+  /** Same semantics as `BenchSkillOptions.signal`; the run can be resumed again. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Finishes a stored run: runs only the (arm, task, repeat) trials it has no result for, appends
+ * them to the same run, and returns the complete `BenchResult`. Nothing runs, and the adapter is
+ * not called, when the run is already complete. Throws `ResumeMismatch` (before running
+ * anything) when the suite, a skill or the agent differs from what the run recorded. Stored
+ * trials are kept as they are, infrastructure errors included.
+ */
+export async function resumeBench(o: ResumeBenchOptions): Promise<BenchResult> {
+  const { onTrial } = o;
+  const id = await resumeRun({
+    runId: o.runId,
+    store: o.store,
+    suite: o.suite,
+    skills: o.skills,
+    adapter: o.adapter,
+    outDir: o.outDir,
+    concurrency: o.concurrency,
+    signal: o.signal,
+    onTrial: onTrial && ((t) => onTrial(toTrialResult(t), t.variant)),
+  });
+  const result = o.store.getResult(id);
+  if (!result) throw new Error(`Run ${id} vanished from the store`);
+  return result;
 }

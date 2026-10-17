@@ -36,6 +36,8 @@ const EXPORTS = [
   { name: "NoChange", kind: "value" },
   { name: "benchSkill", kind: "function" },
   { name: "benchProposal", kind: "function" },
+  { name: "resumeBench", kind: "function" },
+  { name: "ResumeMismatch", kind: "value" },
   { name: "formatReport", kind: "function" },
 ];
 
@@ -113,11 +115,12 @@ console.log("runtime ok: " + specs.length + " exports");
     ...fnNames.map((n) => `export const ${n}Ref: (...a: never[]) => unknown = ${n};`),
     // Typed usage of the three core entry points named by the library contract.
     'import type { Skill } from "@grimoire/core";',
-    'import type { BenchProposal, BenchProposalOptions, BenchResult, BenchSkillOptions } from "@grimoire/core";',
-    "export type BenchTypes = [BenchSkillOptions, BenchProposalOptions, BenchProposal, BenchResult];",
+    'import type { BenchProposal, BenchProposalOptions, BenchResult, BenchSkillOptions, ResumeBenchOptions } from "@grimoire/core";',
+    "export type BenchTypes = [BenchSkillOptions, BenchProposalOptions, BenchProposal, BenchResult, ResumeBenchOptions];",
     "export const report: (r: BenchResult) => string = formatReport;",
     "export const bench: (o: BenchSkillOptions) => Promise<BenchResult> = benchSkill;",
     "export const propose: (o: BenchProposalOptions) => Promise<BenchProposal> = benchProposal;",
+    "export const resume: (o: ResumeBenchOptions) => Promise<BenchResult> = resumeBench;",
     "export async function check(dir: string): Promise<string> {",
     "  const skill: Skill = await loadSkill(dir);",
     "  const digest: string = await digestDir(dir);",

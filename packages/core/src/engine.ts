@@ -5,9 +5,15 @@ import { runJudge } from "./judge.js";
 import type { ResultStore, TrialRecord } from "./store.js";
 import type { ResolvedTask, Suite } from "./suite.js";
 import { digestSuite } from "./suite-digest.js";
-import type { AgentAdapter, RunResult } from "./types.js";
+import type { AgentAdapter, RunResult, Skill } from "./types.js";
 import type { Variant } from "./variants.js";
 import { createWorkspace, destroyWorkspace } from "./workspace.js";
+
+/** What a trial needs from the options of `runBench`/`resumeRun`. */
+type TrialEnv = Pick<
+  BenchOptions,
+  "adapter" | "store" | "outDir" | "model" | "onTrial" | "signal" | "concurrency"
+>;
 
 export interface BenchOptions {
   suite: Suite;
@@ -20,11 +26,18 @@ export interface BenchOptions {
   /** Overrides the suite's repeat count. */
   repeat?: number;
   model?: string;
+  /**
+   * Trials in flight at once: a positive integer, default 1 (sequential). Trials start in the
+   * order task, repeat, variant, so variants stay interleaved within each repeat; with more than
+   * one in flight, they finish (and are stored and reported) in completion order. The adapter
+   * must tolerate that many simultaneous runs (each trial gets its own workspace).
+   */
+  concurrency?: number;
   onTrial?: (trial: TrialRecord) => void;
   /**
-   * Checked before the run is created and between trials (a running trial is not interrupted).
-   * On abort `runBench` rejects with `signal.reason` (an `AbortError` for a plain `abort()`);
-   * trials already stored stay in the store.
+   * Checked before the run is created and before each trial starts; running trials are not
+   * interrupted but finish and are stored. On abort `runBench` rejects with `signal.reason` (an
+   * `AbortError` for a plain `abort()`) once they have drained; `resumeBench` can finish the run.
    */
   signal?: AbortSignal;
 }
@@ -43,7 +56,7 @@ const fileStem = (variant: string, taskId: string, repeatIdx: number) =>
   `${variant.replace(/[^\w.@+-]/g, "_")}__${taskId}__${repeatIdx}`;
 
 async function runTrial(
-  o: BenchOptions,
+  o: TrialEnv,
   task: ResolvedTask,
   variant: Variant,
   repeatIdx: number,
@@ -113,12 +126,82 @@ async function runTrial(
   };
 }
 
+/** One (task, repeat, variant) cell, in the submission order of a run. */
+interface TrialJob {
+  task: ResolvedTask;
+  variant: Variant;
+  repeatIdx: number;
+}
+
 /**
- * Runs every (task, repeat, variant) trial sequentially and returns the run id. Variants are
- * interleaved within each repeat so drift (rate limits, load) hits all of them equally.
+ * Every cell of a run in submission order: task by task, repeat by repeat, and the variants in
+ * the given order within each repeat, so drift (rate limits, load) hits all of them equally.
+ */
+function planTrials(suite: Suite, variants: Variant[], repeat: number): TrialJob[] {
+  const jobs: TrialJob[] = [];
+  for (const task of suite.tasks) {
+    for (let repeatIdx = 1; repeatIdx <= repeat; repeatIdx++) {
+      for (const variant of variants) jobs.push({ task, variant, repeatIdx });
+    }
+  }
+  return jobs;
+}
+
+function checkConcurrency(concurrency: number): void {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new RangeError(`concurrency must be a positive integer, got ${concurrency}`);
+  }
+}
+
+/**
+ * Runs `jobs` with at most `concurrency` trials in flight, started in submission order. Each
+ * trial is stored (a synchronous transaction, so workers never interleave inside it) and
+ * reported as soon as it finishes. After an abort or a failure no new trial starts; trials
+ * already running finish and are stored, then the first error (or `signal.reason`) is thrown.
+ */
+async function executeTrials(
+  o: TrialEnv,
+  runId: number,
+  jobs: TrialJob[],
+  concurrency: number,
+): Promise<void> {
+  const runRel = `runs/${runId}`;
+  const runDir = join(o.outDir, runRel);
+  await mkdir(runDir, { recursive: true });
+
+  let next = 0;
+  let failure: { error: unknown } | undefined;
+  const worker = async () => {
+    while (!failure) {
+      const job = jobs[next];
+      if (!job) return;
+      if (o.signal?.aborted) {
+        failure = { error: o.signal.reason };
+        return;
+      }
+      next++;
+      try {
+        const trial = await runTrial(o, job.task, job.variant, job.repeatIdx, runDir, runRel);
+        o.store.addTrial(runId, trial);
+        o.onTrial?.(trial);
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, worker));
+  if (failure) throw failure.error;
+}
+
+/**
+ * Runs every (task, repeat, variant) trial and returns the run id. Variants are interleaved
+ * within each repeat so drift (rate limits, load) hits all of them equally. Trials start in that
+ * order, at most `concurrency` (default 1, sequential) at a time.
  */
 export async function runBench(o: BenchOptions): Promise<number> {
   o.signal?.throwIfAborted();
+  const concurrency = o.concurrency ?? 1;
+  checkConcurrency(concurrency);
   const labels = o.variants.map((v) => v.label);
   if (labels.length < 2) throw new Error("A benchmark needs at least two variants to compare");
   if (new Set(labels).size !== labels.length) {
@@ -146,19 +229,99 @@ export async function runBench(o: BenchOptions): Promise<number> {
       skillDigest: v.skill?.digest,
     })),
   });
-  const runRel = `runs/${runId}`;
-  const runDir = join(o.outDir, runRel);
-  await mkdir(runDir, { recursive: true });
-
-  for (const task of o.suite.tasks) {
-    for (let i = 1; i <= repeat; i++) {
-      for (const variant of o.variants) {
-        o.signal?.throwIfAborted();
-        const trial = await runTrial(o, task, variant, i, runDir, runRel);
-        o.store.addTrial(runId, trial);
-        o.onTrial?.(trial);
-      }
-    }
-  }
+  await executeTrials(o, runId, planTrials(o.suite, o.variants, repeat), concurrency);
   return runId;
+}
+
+/** Why a stored run cannot be resumed with what was supplied. */
+export class ResumeMismatch extends Error {
+  override name = "ResumeMismatch";
+  constructor(
+    /** Which input differs from the run: the suite, a skill, or the agent. */
+    readonly kind: "suite" | "skill" | "agent",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export interface ResumeRunOptions {
+  runId: number;
+  suite: Suite;
+  /** Must contain every skill version the run used (matched by digest); extras are ignored. */
+  skills: Skill[];
+  adapter: AgentAdapter;
+  store: ResultStore;
+  outDir: string;
+  concurrency?: number;
+  onTrial?: (trial: TrialRecord) => void;
+  signal?: AbortSignal;
+}
+
+const trialKey = (variant: string, taskId: string, repeatIdx: number) =>
+  `${variant}\0${taskId}\0${repeatIdx}`;
+
+/**
+ * Runs only the (variant, task, repeat) cells that `runId` does not have a trial for, appending
+ * them to that run, and returns `runId`. The stored suite digest, skill digests and agent id must
+ * match the supplied ones (`ResumeMismatch` otherwise, before anything runs); repeat count and
+ * model come from the run. A run with nothing missing is returned untouched without calling the
+ * adapter. Stored trials are never re-run, including infrastructure errors.
+ */
+export async function resumeRun(o: ResumeRunOptions): Promise<number> {
+  o.signal?.throwIfAborted();
+  const concurrency = o.concurrency ?? 1;
+  checkConcurrency(concurrency);
+
+  const run = o.store.getRun(o.runId);
+  if (!run) throw new Error(`No run with id ${o.runId}`);
+  const { suiteDigest, repeat } = run;
+  if (suiteDigest === undefined || repeat === undefined) {
+    throw new Error(
+      `Run ${run.id} was recorded before suite digests were stored, so it cannot be resumed`,
+    );
+  }
+  const actualDigest = await digestSuite(o.suite);
+  if (actualDigest !== suiteDigest) {
+    throw new ResumeMismatch(
+      "suite",
+      `Run ${run.id} used suite ${suiteDigest}, but the supplied suite is ${actualDigest}`,
+    );
+  }
+  if (o.adapter.id !== run.agent) {
+    throw new ResumeMismatch(
+      "agent",
+      `Run ${run.id} used agent "${run.agent}", but the supplied adapter is "${o.adapter.id}"`,
+    );
+  }
+  const variants = run.variants.map((v): Variant => {
+    if (v.skillDigest === undefined) {
+      if (v.skillName !== undefined) {
+        throw new Error(`Run ${run.id} has no digest recorded for variant "${v.label}"`);
+      }
+      return { label: v.label };
+    }
+    const skill = o.skills.find((s) => s.digest === v.skillDigest);
+    if (!skill) {
+      throw new ResumeMismatch(
+        "skill",
+        `Run ${run.id} variant "${v.label}" used skill ${v.skillName ?? "?"} ${v.skillDigest}, which was not supplied (or has changed since)`,
+      );
+    }
+    return { label: v.label, skill };
+  });
+
+  const done = new Set(
+    o.store.listTrials(run.id).map((t) => trialKey(t.variant, t.taskId, t.repeatIdx)),
+  );
+  const pending = planTrials(o.suite, variants, repeat).filter(
+    (j) => !done.has(trialKey(j.variant.label, j.task.id, j.repeatIdx)),
+  );
+  if (pending.length === 0) return run.id;
+
+  const detected = await o.adapter.detect();
+  if (!detected.available)
+    throw new Error(`Agent "${o.adapter.id}" is not available on this machine`);
+  await executeTrials({ ...o, model: run.model }, run.id, pending, concurrency);
+  return run.id;
 }

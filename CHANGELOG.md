@@ -22,6 +22,24 @@ All notable changes to `@grimoire/core` (and the CLI built on it). Format follow
   false) makes `significant` also require the interval to exclude zero; it is recorded in
   `comparison.gate`. Additive: `schemaVersion` stays 1 and results without `ci` still parse.
   `formatReport` and CLI output are unchanged.
+- Parallel trials (#24): `concurrency` option on `runBench`/`benchSkill`/`benchProposal` (CLI `bench` and
+  `propose --concurrency <n>`, positive integer, default 1 = unchanged sequential behavior; invalid
+  values throw a `RangeError` before a run is created). Trials start in the order task, repeat, arm
+  through a bounded pool and are stored and reported in completion order; the `BenchResult` has the same
+  shape and ordering. SQLite writes are synchronous transactions, and each trial already had its own
+  workspace and file stem, so no new locking was needed. On abort the trials already running are not
+  interrupted: they finish and are stored, no new trial starts, then the promise rejects with
+  `signal.reason` (the same happens when `onTrial` or a store write throws; the first error is
+  rethrown). At concurrency 1 this is the previous behavior.
+- Resumable runs (#24): `resumeBench({ runId, store, suite, skills, adapter, outDir, concurrency?,
+  onTrial?, signal? })` runs only the (arm, task, repeat) trials a stored run has no result for, appends
+  them to the same run and returns the complete `BenchResult`; a complete run is returned untouched
+  without calling the adapter. Model and repeat count come from the run. The suite digest, skill digests
+  (matched by digest, extras ignored) and agent id must match what the run recorded, else the new typed
+  `ResumeMismatch` (`kind`: `"suite" | "skill" | "agent"`) is thrown before anything runs. Runs recorded
+  before suite digests (internal schema v3 and older) cannot be resumed. No schema change.
+- CLI (#24): `grimoire resume <runId> [--skill <dir>...] [--dir] [--git --git-path] [--suite <file>]
+  [--concurrency <n>] [--agent <id>] [--out <dir>]` finishes a stored run and prints the report.
 
 ## 0.1.0 - 2026-10-17
 

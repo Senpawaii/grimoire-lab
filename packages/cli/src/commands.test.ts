@@ -1,10 +1,17 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { type AgentAdapter, loadSkill, ResultStore } from "@grimoire/core";
+import {
+  type AgentAdapter,
+  benchSkill,
+  loadSkill,
+  loadSuite,
+  ResultStore,
+  ResumeMismatch,
+} from "@grimoire/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createProgram } from "./program.js";
 import { scaffoldSkill } from "./scaffold.js";
@@ -141,6 +148,171 @@ describe("propose", () => {
         join(tmp, "out"),
       ]),
     ).rejects.toThrow(/Unknown agent "nope"/);
+  });
+});
+
+describe("propose --concurrency", () => {
+  it("runs the proposal in parallel", async () => {
+    const current = await scaffoldSkill("demo", tmp);
+    const candidate = await scaffoldSkill("demo", join(tmp, "cand"));
+    await writeSkillMd(candidate, "0.2.0", "newer");
+    const out = join(tmp, "out");
+    const text = await run([
+      "propose",
+      current,
+      "--candidate",
+      candidate,
+      "--repeat",
+      "3",
+      "--concurrency",
+      "3",
+      "--out",
+      out,
+    ]);
+    expect(text).toContain("Verdict:");
+    const store = new ResultStore(join(out, "results.db"));
+    expect(store.listTrials(1)).toHaveLength(6);
+    store.close();
+  });
+});
+
+describe("resume", () => {
+  /** Leaves run 1 in `<out>/results.db` aborted after `after` of its 6 trials. */
+  async function interrupted(skillDir: string, out: string, after = 2) {
+    const store = new ResultStore(join(out, "results.db"));
+    const ac = new AbortController();
+    let n = 0;
+    try {
+      await expect(
+        benchSkill({
+          skill: await loadSkill(skillDir),
+          suite: await loadSuite(join(skillDir, "grimoire.bench.yaml")),
+          adapter: fake(),
+          outDir: out,
+          store,
+          signal: ac.signal,
+          onTrial: () => {
+            if (++n === after) ac.abort();
+          },
+        }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+    } finally {
+      store.close();
+    }
+  }
+
+  const trialCount = (out: string) => {
+    const store = new ResultStore(join(out, "results.db"));
+    try {
+      return store.listTrials(1).length;
+    } finally {
+      store.close();
+    }
+  };
+
+  it("finishes an aborted run from --skill, runs only the missing trials and prints the report", async () => {
+    const skillDir = await scaffoldSkill("demo", tmp);
+    const out = join(tmp, "out");
+    await interrupted(skillDir, out);
+    expect(trialCount(out)).toBe(2);
+
+    const text = await run([
+      "resume",
+      "1",
+      "--skill",
+      skillDir,
+      "--concurrency",
+      "2",
+      "--out",
+      out,
+    ]);
+
+    expect(text).toContain("Resuming run 1 (demo-basic) on fake");
+    expect(text.match(/example #/g)).toHaveLength(4);
+    expect(text).toMatch(/with-skill\s+3\/3/);
+    expect(text).toContain(`Saved to ${join(out, "runs", "1")}`);
+    expect(trialCount(out)).toBe(6);
+  });
+
+  it("finds the skill by digest in --dir and the suite next to it, or from --suite", async () => {
+    const skills = join(tmp, "skills");
+    const skillDir = await scaffoldSkill("demo", skills);
+    const out = join(tmp, "out");
+    await interrupted(skillDir, out, 5);
+    expect(await run(["resume", "1", "--dir", skills, "--out", out])).toContain("Resuming run 1");
+    expect(trialCount(out)).toBe(6);
+
+    // Complete now: nothing runs, the report is printed again; --suite points at a copy.
+    const copy = join(tmp, "suite-copy.yaml");
+    await copyFile(join(skillDir, "grimoire.bench.yaml"), copy);
+    const text = await run(["resume", "1", "--dir", skills, "--suite", copy, "--out", out]);
+    expect(text).not.toContain("example #");
+    expect(text).toMatch(/baseline\s+0\/3/);
+    expect(text).toMatch(/with-skill\s+3\/3/);
+  });
+
+  it("refuses a skill that changed since the run, naming the missing digest", async () => {
+    const skillDir = await scaffoldSkill("demo", tmp);
+    const out = join(tmp, "out");
+    await interrupted(skillDir, out);
+    await writeSkillMd(skillDir, "0.1.1", "edited");
+
+    const err = await run(["resume", "1", "--skill", skillDir, "--out", out]).catch((e) => e);
+    expect(err).toBeInstanceOf(ResumeMismatch);
+    expect(err).toMatchObject({ kind: "skill" });
+    expect(err.message).toMatch(/not available any more/);
+    expect(trialCount(out)).toBe(2);
+  });
+
+  it("refuses a suite that changed since the run", async () => {
+    const skillDir = await scaffoldSkill("demo", tmp);
+    const out = join(tmp, "out");
+    await interrupted(skillDir, out);
+    const yamlPath = join(skillDir, "grimoire.bench.yaml");
+    await writeFile(yamlPath, (await readFile(yamlPath, "utf8")).replace("Describe", "Explain"));
+
+    await expect(run(["resume", "1", "--skill", skillDir, "--out", out])).rejects.toMatchObject({
+      name: "ResumeMismatch",
+      kind: "suite",
+    });
+    expect(trialCount(out)).toBe(2);
+  });
+
+  it("uses the agent of the run, refusing --agent for another one", async () => {
+    const skillDir = await scaffoldSkill("demo", tmp);
+    const out = join(tmp, "out");
+    await interrupted(skillDir, out);
+    const other = (): AgentAdapter => ({ ...fake(), id: "other" });
+
+    await expect(
+      run(["resume", "1", "--skill", skillDir, "--agent", "other", "--out", out], other),
+    ).rejects.toMatchObject({ name: "ResumeMismatch", kind: "agent" });
+    expect(trialCount(out)).toBe(2);
+  });
+
+  it("rejects an unknown run, a bad id and a bad --concurrency", async () => {
+    const skillDir = await scaffoldSkill("demo", tmp);
+    const out = join(tmp, "out");
+    await expect(run(["resume", "7", "--out", out])).rejects.toThrow("No run with id 7");
+    await expect(run(["resume", "x", "--out", out])).rejects.toThrow(/positive integer/);
+    await expect(
+      run(["resume", "1", "--skill", skillDir, "--concurrency", "0", "--out", out]),
+    ).rejects.toThrow(/positive integer/);
+  });
+
+  it("needs --suite when the run has no skill arm to find one next to", async () => {
+    const out = join(tmp, "out");
+    const store = new ResultStore(join(out, "results.db"));
+    store.createRun({
+      suite: "s",
+      agent: "fake",
+      suiteDigest: "sha256:x",
+      taskIds: ["t"],
+      repeat: 1,
+      variants: [{ label: "a" }, { label: "b" }],
+    });
+    store.close();
+    await expect(run(["resume", "1", "--out", out])).rejects.toThrow(/pass --suite/);
   });
 });
 
