@@ -16,6 +16,7 @@ export {
   deriveKind,
   evidenceFor,
   IncomparableArms,
+  newcombeInterval,
   type SkillEvidence,
   SuiteMismatch,
 } from "./compare.js";
@@ -43,6 +44,8 @@ export {
   type BuildResultContext,
   buildBenchResult,
   type Comparison,
+  type ComparisonCi,
+  ComparisonCiSchema,
   ComparisonSchema,
   type Gate,
   GateSchema,

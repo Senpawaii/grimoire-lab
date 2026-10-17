@@ -115,8 +115,21 @@ export const GateSchema = z.object({
   minTrials: z.number().int().positive(),
   tolerance: z.number().min(0).max(1),
   excludeInfraErrors: z.boolean(),
+  /** Whether `significant` also demanded `ci` exclude zero. Absent in results written before it existed (= false). */
+  requireCiExcludesZero: z.boolean().optional(),
   /** The pass-rate delta the gate looked at; absent when a side had no countable trials. */
   delta: z.number().optional(),
+});
+
+/**
+ * Interval for the pass-rate delta (subject minus reference) over the gate's countable trials;
+ * see `compare` in compare.ts. `method` names the construction so consumers can tell intervals apart.
+ */
+export const ComparisonCiSchema = z.object({
+  level: z.number().gt(0).lt(1),
+  method: z.literal("newcombe-wilson"),
+  lower: z.number().min(-1).max(1),
+  upper: z.number().min(-1).max(1),
 });
 
 export const ComparisonSchema = z.object({
@@ -146,6 +159,8 @@ export const ComparisonSchema = z.object({
   significant: z.boolean(),
   verdict: z.enum(["better", "same", "worse"]),
   gate: GateSchema,
+  /** Absent when a side had no countable trials, and in results written before it existed. */
+  ci: ComparisonCiSchema.optional(),
 });
 
 export const BenchResultSchema = z.object({
@@ -171,6 +186,7 @@ export type TrialResult = z.infer<typeof TrialResultSchema>;
 export type TaskResult = z.infer<typeof TaskResultSchema>;
 export type ArmResult = z.infer<typeof ArmResultSchema>;
 export type Gate = z.infer<typeof GateSchema>;
+export type ComparisonCi = z.infer<typeof ComparisonCiSchema>;
 export type Comparison = z.infer<typeof ComparisonSchema>;
 export type BenchResult = z.infer<typeof BenchResultSchema>;
 

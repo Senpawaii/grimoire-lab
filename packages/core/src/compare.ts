@@ -1,4 +1,4 @@
-import type { ArmResult, BenchResult, Comparison, Gate, Score } from "./result.js";
+import type { ArmResult, BenchResult, Comparison, ComparisonCi, Gate, Score } from "./result.js";
 
 /** The two arms cannot be meaningfully compared (see `deriveKind`). */
 export class IncomparableArms extends Error {
@@ -12,7 +12,7 @@ export class SuiteMismatch extends IncomparableArms {
 
 /**
  * Decision rule for `significant` and `verdict`. It is a THRESHOLD GATE, not a statistical test:
- * there is no p-value or confidence interval. It exists so that a tiny sample or a tiny delta is
+ * there is no p-value. It exists so that a tiny sample or a tiny delta is
  * reported as "same" instead of "better". Consumers MUST set their own `minTrials` and
  * `tolerance` before acting on it (for example before auto-promoting a skill version).
  */
@@ -30,9 +30,19 @@ export interface CompareOptions {
    * Default true. Only the gate is affected; `deltas` and `tasks` always use `Score.passRate`.
    */
   excludeInfraErrors?: boolean;
+  /**
+   * Also require `Comparison.ci` to exclude zero for `significant` (a real statistical check on
+   * top of the threshold). Default false. A comparison without a `ci` is then never significant.
+   */
+  requireCiExcludesZero?: boolean;
 }
 
-export const DEFAULT_GATE = { minTrials: 5, tolerance: 0.1, excludeInfraErrors: true } as const;
+export const DEFAULT_GATE = {
+  minTrials: 5,
+  tolerance: 0.1,
+  excludeInfraErrors: true,
+  requireCiExcludesZero: false,
+} as const;
 
 /** An arm together with the digest of the suite it ran, so arms from different runs can be compared. */
 export interface ArmRef {
@@ -102,6 +112,39 @@ function gateRate(s: Score, excludeInfraErrors: boolean): { rate?: number; count
   return countable > 0 ? { rate: s.passes / countable, countable } : { countable };
 }
 
+/** Two-sided 95% standard normal quantile. */
+const Z_95 = 1.959963984540054;
+
+/** Wilson score interval for `passes` out of `n` (n >= 1). */
+function wilson(passes: number, n: number): { p: number; lower: number; upper: number } {
+  const p = passes / n;
+  const z2 = Z_95 * Z_95;
+  const centre = (p + z2 / (2 * n)) / (1 + z2 / n);
+  const half = (Z_95 * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / (1 + z2 / n);
+  return { p, lower: Math.max(0, centre - half), upper: Math.min(1, centre + half) };
+}
+
+/**
+ * 95% Newcombe hybrid-score interval (Newcombe 1998, method 10) for `p1 - p2`, two independent
+ * proportions `x1/n1` and `x2/n2` (each n >= 1): Wilson score intervals `(l, u)` per arm, then
+ * `d -/+ sqrt((p1 - l1)^2 + (u2 - p2)^2)` and `d +/- sqrt((u1 - p1)^2 + (p2 - l2)^2)`.
+ * Unlike the Wald interval it stays inside [-1, 1] and is non-degenerate at 0/n and n/n.
+ */
+export function newcombeInterval(
+  x1: number,
+  n1: number,
+  x2: number,
+  n2: number,
+): { lower: number; upper: number } {
+  const a = wilson(x1, n1);
+  const b = wilson(x2, n2);
+  const d = a.p - b.p;
+  return {
+    lower: Math.max(-1, d - Math.sqrt((a.p - a.lower) ** 2 + (b.upper - b.p) ** 2)),
+    upper: Math.min(1, d + Math.sqrt((a.upper - a.p) ** 2 + (b.p - b.lower) ** 2)),
+  };
+}
+
 const EPS = 1e-9;
 
 /**
@@ -123,15 +166,26 @@ const EPS = 1e-9;
  *   `delta < 0`, otherwise `"same"`.
  *
  * Defaults: `minTrials` 5, `tolerance` 0.1, `excludeInfraErrors` true. The rule used is recorded
- * in `Comparison.gate`. This is a threshold gate, NOT a statistical test (no p-value, no
- * confidence interval): with LLM agents, 5 trials per side and a 0.1 delta is still noise-prone.
- * Set your own `minTrials`/`tolerance`, or compute an interval from `TaskResult.trials`, before
- * acting on the verdict.
+ * in `Comparison.gate`. This is a threshold gate, NOT a statistical test (no p-value; `ci` is
+ * informational unless `requireCiExcludesZero` is set): with LLM agents, 5 trials per side and a
+ * 0.1 delta is still noise-prone. Set your own `minTrials`/`tolerance`, or opt in to
+ * `requireCiExcludesZero`, before acting on the verdict.
+ *
+ * ## `ci`
+ *
+ * `ci` is a 95% Newcombe hybrid-score interval (Wilson score interval per arm, combined as for
+ * two independent proportions) for the same pass-rate delta the gate looks at: it uses the same
+ * countable trials, so with `excludeInfraErrors` (default) infra errors are left out. Trials are
+ * treated as independent draws, pooled over tasks, which is an approximation when tasks differ in
+ * difficulty. It is absent when a side has no countable trials. With `requireCiExcludesZero`
+ * (default false) `significant` additionally needs `ci.lower > 0` or `ci.upper < 0`; without it
+ * `significant` and `verdict` are unchanged by `ci`.
  */
 export function compare(subject: ArmRef, reference: ArmRef, opts: CompareOptions = {}): Comparison {
   const minTrials = opts.minTrials ?? DEFAULT_GATE.minTrials;
   const tolerance = opts.tolerance ?? DEFAULT_GATE.tolerance;
   const excludeInfraErrors = opts.excludeInfraErrors ?? DEFAULT_GATE.excludeInfraErrors;
+  const requireCiExcludesZero = opts.requireCiExcludesZero ?? DEFAULT_GATE.requireCiExcludesZero;
   if (!Number.isInteger(minTrials) || minTrials < 1) {
     throw new RangeError(`minTrials must be a positive integer, got ${minTrials}`);
   }
@@ -160,16 +214,27 @@ export function compare(subject: ArmRef, reference: ArmRef, opts: CompareOptions
   const sg = gateRate(s.score, excludeInfraErrors);
   const rg = gateRate(r.score, excludeInfraErrors);
   const delta = sg.rate !== undefined && rg.rate !== undefined ? sg.rate - rg.rate : undefined;
+  const ci: ComparisonCi | undefined =
+    delta === undefined
+      ? undefined
+      : {
+          level: 0.95,
+          method: "newcombe-wilson",
+          ...newcombeInterval(s.score.passes, sg.countable, r.score.passes, rg.countable),
+        };
+  const ciOk = !requireCiExcludesZero || (ci !== undefined && (ci.lower > 0 || ci.upper < 0));
   const significant =
     delta !== undefined &&
     sg.countable >= minTrials &&
     rg.countable >= minTrials &&
     delta !== 0 &&
-    Math.abs(delta) >= tolerance - EPS;
+    Math.abs(delta) >= tolerance - EPS &&
+    ciOk;
   const gate: Gate = {
     minTrials,
     tolerance,
     excludeInfraErrors,
+    requireCiExcludesZero,
     ...(delta === undefined ? {} : { delta }),
   };
 
@@ -198,6 +263,7 @@ export function compare(subject: ArmRef, reference: ArmRef, opts: CompareOptions
     significant,
     verdict: !significant || delta === undefined ? "same" : delta > 0 ? "better" : "worse",
     gate,
+    ...(ci === undefined ? {} : { ci }),
   };
 }
 

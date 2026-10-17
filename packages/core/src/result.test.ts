@@ -192,6 +192,25 @@ describe("parseBenchResult", () => {
     expect(parseBenchResult(JSON.stringify(golden))).toStrictEqual(golden);
   });
 
+  it("still parses a result written before `ci` and `requireCiExcludesZero` existed", () => {
+    const old = structuredClone(golden) as BenchResult;
+    for (const c of old.comparisons) {
+      delete c.ci;
+      delete c.gate.requireCiExcludesZero;
+    }
+    const parsed = parseBenchResult(old);
+    expect(parsed).toStrictEqual(old);
+    expect(parsed.comparisons[0]).not.toHaveProperty("ci");
+  });
+
+  it("rejects an interval outside [-1, 1]", () => {
+    const bad = structuredClone(golden) as BenchResult;
+    const ci = bad.comparisons[0]?.ci;
+    if (!ci) throw new Error("fixture has no ci");
+    ci.upper = 1.5;
+    expect(() => parseBenchResult(bad)).toThrow(/comparisons\.0\.ci\.upper/);
+  });
+
   it("rejects unknown or missing schema versions instead of guessing", () => {
     expect(() => parseBenchResult({ ...(golden as object), schemaVersion: 2 })).toThrow(
       /Unsupported BenchResult schemaVersion 2/,

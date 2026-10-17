@@ -14,6 +14,15 @@ All notable changes to `@grimoire/core` (and the CLI built on it). Format follow
 
 ## Unreleased
 
+### Added
+
+- `Comparison.ci` (#25): optional 95% Newcombe-Wilson interval for the pass-rate delta, computed in
+  `compare` from the gate's countable trials (infra errors excluded by default), plus
+  `newcombeInterval` and `ComparisonCiSchema`. New gate option `requireCiExcludesZero` (default
+  false) makes `significant` also require the interval to exclude zero; it is recorded in
+  `comparison.gate`. Additive: `schemaVersion` stays 1 and results without `ci` still parse.
+  `formatReport` and CLI output are unchanged.
+
 ## 0.1.0 - 2026-10-17
 
 Library work for Heartwood integration (design: `docs/design/library-api.md`):

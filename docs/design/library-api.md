@@ -144,9 +144,10 @@ interface Comparison {
      machines because arms are self-describing (agent, skill digest) and suite digest is checked.
   2. Later, if interleaving across agents matters, `benchSkill` can accept several adapters. This
      only fills `arms[].agent` differently; the schema does not change. Not built now.
-- No significance test or confidence interval in v1, so consumers MUST gate on `n` and a minimum delta
-  (see Consumer contract). `n` is given, and per-trial data stays in `TaskResult.trials` so a consumer can
-  compute its own interval. An optional `ci` field later is additive.
+- No significance test in v1; the threshold gate is not statistical, so consumers MUST gate on `n` and a
+  minimum delta (see Consumer contract). `n` is given, and per-trial data stays in `TaskResult.trials`.
+  An optional `ci` (95% Newcombe-Wilson interval for the pass-rate delta) was added later, additively, with
+  the opt-in gate `requireCiExcludesZero`.
 
 ### Versioning policy
 

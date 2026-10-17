@@ -287,14 +287,24 @@ evidenceFor(result, skillRef); // score + vsBaseline / vsPrevious comparisons fo
 way. It returns the deltas (subject minus reference), per-task deltas, `n` with error counts, and a `kind`
 (`skill-vs-baseline`, `version-vs-version`, `agent-vs-agent`).
 
-`significant` and `verdict` come from a **threshold gate, not a statistical test**: there is no p-value and
-no confidence interval. `significant` is true when both sides have at least `minTrials` countable trials
+`significant` and `verdict` come from a **threshold gate, not a statistical test**: there is no p-value.
+`significant` is true when both sides have at least `minTrials` countable trials
 (pooled over all tasks; default 5) and the pass-rate delta is at least `tolerance` in absolute value
 (default 0.1). `verdict` is `same` unless `significant`, then `better` or `worse` by the sign of the delta.
 With `excludeInfraErrors` (default true) the gate uses `passes / (trials - errors)` and counts only
 countable trials; `deltas` always use the plain `passRate`. The rule that produced a verdict is recorded
 in `comparison.gate`. Five trials and a 0.1 delta is noisy with LLM agents: consumers must set their own
-`minTrials`/`tolerance` (or compute an interval from `TaskResult.trials`) before auto-promoting anything.
+`minTrials`/`tolerance` (or opt in to `requireCiExcludesZero`, below) before auto-promoting anything.
+
+`comparison.ci` is a 95% interval for the same pass-rate delta: `{ level: 0.95, method: "newcombe-wilson",
+lower, upper }`. It is the Newcombe hybrid-score interval for the difference of two independent
+proportions (a Wilson score interval per arm, combined), computed from the gate's countable trials (infra
+errors left out under the default `excludeInfraErrors`). It stays within [-1, 1] and is well-defined at 0/n
+and n/n. Trials are treated as independent draws pooled over tasks, which is an approximation. It is absent
+when a side has no countable trials, and by itself changes nothing: `significant` keeps its definition.
+Pass `requireCiExcludesZero: true` to additionally require `ci.lower > 0` or `ci.upper < 0` (recorded in
+`comparison.gate`; default false). Results written before `ci` existed still parse, without it. The
+human-readable report and CLI output do not show the interval.
 
 ### Proposing a version
 
