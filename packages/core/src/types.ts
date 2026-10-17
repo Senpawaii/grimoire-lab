@@ -45,6 +45,13 @@ export interface RunResult {
   rawOutput: string;
   /** Set when status is "error". */
   error?: string;
+  /**
+   * Only meaningful with status "error". `"infrastructure"` (the default when absent) means the
+   * harness could not measure the skill: adapter crash, rate limit, auth failure. `"agent"` means
+   * the agent ran and failed on its own, which counts against the skill. A timeout is never an
+   * infrastructure error.
+   */
+  errorKind?: "infrastructure" | "agent";
 }
 
 export interface AgentAdapter {

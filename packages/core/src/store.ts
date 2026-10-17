@@ -2,12 +2,16 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AssertionResult } from "./assertions.js";
+import { type BenchResult, buildBenchResult } from "./result.js";
 
 /**
  * v1 stored a single skill per run and had no `variants` table (unsupported, refused).
  * v2 lacked `assertion_results.score`; it is migrated in place.
+ * v3 lacked `runs.suite_digest`/`suite_task_ids`/`repeat` and `trials.infra_error`; migrated in
+ * place (old rows read back with those fields absent).
+ * This number is internal and independent of the BenchResult `schemaVersion`.
  */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 /** One arm of a comparison: the baseline (no skill) or a specific skill version. */
 export interface VariantMeta {
@@ -23,6 +27,12 @@ export interface RunMeta {
   agent: string;
   agentVersion?: string;
   model?: string;
+  /** `digestSuite(suite)`; needed to read the run back as a BenchResult. */
+  suiteDigest?: string;
+  /** Task ids in suite order; needed to read the run back as a BenchResult. */
+  taskIds?: string[];
+  /** Repeats per task actually requested. */
+  repeat?: number;
   /** In run order; the first variant is also first in reports. */
   variants: VariantMeta[];
 }
@@ -43,6 +53,12 @@ export interface TrialRecord {
   durationMs: number;
   finalMessage: string;
   error?: string;
+  /**
+   * The harness could not measure the skill (adapter crash, rate limit, failed judge call), as
+   * opposed to the skill failing. Absent on rows written before schema v4; readers then fall
+   * back to `status === "error"`.
+   */
+  infraError?: boolean;
   /** Relative to the output directory. */
   transcriptPath: string;
   assertions: AssertionResult[];
@@ -55,7 +71,10 @@ CREATE TABLE IF NOT EXISTS runs (
   agent TEXT NOT NULL,
   agent_version TEXT,
   model TEXT,
-  started_at TEXT NOT NULL
+  started_at TEXT NOT NULL,
+  suite_digest TEXT,
+  suite_task_ids TEXT,
+  repeat INTEGER
 );
 CREATE TABLE IF NOT EXISTS variants (
   run_id INTEGER NOT NULL REFERENCES runs(id),
@@ -79,7 +98,8 @@ CREATE TABLE IF NOT EXISTS trials (
   duration_ms INTEGER NOT NULL,
   final_message TEXT NOT NULL,
   error TEXT,
-  transcript_path TEXT NOT NULL
+  transcript_path TEXT NOT NULL,
+  infra_error INTEGER
 );
 CREATE TABLE IF NOT EXISTS assertion_results (
   trial_id INTEGER NOT NULL REFERENCES trials(id),
@@ -129,6 +149,12 @@ export class ResultStore {
       }
     }
     if (version === 2) this.db.exec("ALTER TABLE assertion_results ADD COLUMN score REAL");
+    if (version >= 2 && version < 4) {
+      this.db.exec("ALTER TABLE runs ADD COLUMN suite_digest TEXT");
+      this.db.exec("ALTER TABLE runs ADD COLUMN suite_task_ids TEXT");
+      this.db.exec("ALTER TABLE runs ADD COLUMN repeat INTEGER");
+      this.db.exec("ALTER TABLE trials ADD COLUMN infra_error INTEGER");
+    }
     this.db.exec(SCHEMA);
     this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
@@ -138,7 +164,7 @@ export class ResultStore {
     try {
       const r = this.db
         .prepare(
-          "INSERT INTO runs (suite, agent, agent_version, model, started_at) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO runs (suite, agent, agent_version, model, started_at, suite_digest, suite_task_ids, repeat) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .run(
           meta.suite,
@@ -146,6 +172,9 @@ export class ResultStore {
           meta.agentVersion ?? null,
           meta.model ?? null,
           new Date().toISOString(),
+          meta.suiteDigest ?? null,
+          meta.taskIds ? JSON.stringify(meta.taskIds) : null,
+          meta.repeat ?? null,
         );
       const runId = Number(r.lastInsertRowid);
       const ins = this.db.prepare(
@@ -176,8 +205,8 @@ export class ResultStore {
       const r = this.db
         .prepare(
           `INSERT INTO trials (run_id, variant, task_id, repeat_idx, status, passed, tokens, cost_usd,
-             duration_ms, final_message, error, transcript_path)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             duration_ms, final_message, error, transcript_path, infra_error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           runId,
@@ -192,6 +221,7 @@ export class ResultStore {
           t.finalMessage,
           t.error ?? null,
           t.transcriptPath,
+          t.infraError === undefined ? null : t.infraError ? 1 : 0,
         );
       const trialId = Number(r.lastInsertRowid);
       const ins = this.db.prepare(
@@ -225,15 +255,48 @@ export class ResultStore {
       skillVersion: optional(v.skill_version),
       skillDigest: optional(v.skill_digest),
     }));
+    const taskIds = optional(row.suite_task_ids);
     return {
       id: Number(row.id),
       suite: String(row.suite),
       agent: String(row.agent),
       agentVersion: optional(row.agent_version),
       model: optional(row.model),
+      suiteDigest: optional(row.suite_digest),
+      taskIds: taskIds === undefined ? undefined : (JSON.parse(taskIds) as string[]),
+      repeat: row.repeat === null || row.repeat === undefined ? undefined : Number(row.repeat),
       startedAt: String(row.started_at),
       variants,
     };
+  }
+
+  /**
+   * A stored run as a self-contained, JSON-serializable `BenchResult`; `undefined` if there is no
+   * such run. Throws for runs written before schema v4: they never recorded a suite digest, so
+   * they cannot be compared safely (read them with `getRun`/`listTrials`).
+   */
+  getResult(id: number | string): BenchResult | undefined {
+    const n = typeof id === "string" ? Number(id) : id;
+    if (!Number.isInteger(n)) return undefined;
+    const run = this.getRun(n);
+    return run && this.toResult(run);
+  }
+
+  /** The most recent run as a `BenchResult`; same caveats as `getResult`. */
+  latestResult(): BenchResult | undefined {
+    const run = this.getRun();
+    return run && this.toResult(run);
+  }
+
+  private toResult(run: RunRecord): BenchResult {
+    if (run.suiteDigest === undefined || run.taskIds === undefined) {
+      throw new Error(
+        `Run ${run.id} was recorded before suite digests were stored, so it cannot be read as a BenchResult`,
+      );
+    }
+    return buildBenchResult(run, this.listTrials(run.id), {
+      suite: { digest: run.suiteDigest, taskIds: run.taskIds },
+    });
   }
 
   listTrials(runId: number): TrialRecord[] {
@@ -255,6 +318,7 @@ export class ResultStore {
       finalMessage: String(r.final_message),
       error: optional(r.error),
       transcriptPath: String(r.transcript_path),
+      infraError: r.infra_error === null ? undefined : r.infra_error === 1,
       assertions: (assertionStmt.all(r.id as number) as Row[]).map((a) => ({
         type: String(a.type) as AssertionResult["type"],
         passed: a.passed === 1,

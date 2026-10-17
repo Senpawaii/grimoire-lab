@@ -165,6 +165,32 @@ describe("runBench", () => {
     expect(seen[1]?.passed).toBe(true);
   });
 
+  it("marks adapter errors as infra errors unless the adapter says the agent failed; timeouts never are", async () => {
+    const kinds: Partial<RunResult>[] = [
+      { status: "error", error: "429 rate limited" },
+      { status: "error", error: "max turns", errorKind: "agent" },
+      { status: "timeout", error: "timed out" },
+      {},
+    ];
+    let n = 0;
+    const { adapter } = fakeAdapter({ onRun: async () => kinds[n++ % kinds.length] });
+    const s = suite("[{ type: file_exists, path: out.txt }]");
+    const { seen } = await bench(adapter, s);
+    expect(seen.map((t) => t.infraError)).toEqual([true, false, false, false]);
+  });
+
+  it("records the suite digest, task ids and repeat so the run reads back as a BenchResult", async () => {
+    const { adapter } = fakeAdapter({ onRun: writeOut });
+    const { store, runId } = await bench(adapter);
+    const run = store.getRun(runId);
+    expect(run?.suiteDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(run).toMatchObject({ taskIds: ["t1"], repeat: 2 });
+    const result = store.getResult(runId);
+    expect(result?.suite).toEqual({ name: "s", digest: run?.suiteDigest, taskIds: ["t1"] });
+    expect(result?.arms.map((a) => a.label)).toEqual(["baseline", "with-skill"]);
+    expect(result?.comparisons).toHaveLength(1);
+  });
+
   it("does not evaluate assertions for timed-out trials, even if the files would pass", async () => {
     const { adapter } = fakeAdapter({
       onRun: async (ws) => {

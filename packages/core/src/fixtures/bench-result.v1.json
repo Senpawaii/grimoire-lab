@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "id": "7",
+  "startedAt": "2026-10-17T12:00:00.000Z",
+  "suite": { "name": "demo-suite", "digest": "sha256:suite", "taskIds": ["t1"] },
+  "repeat": 2,
+  "arms": [
+    {
+      "label": "baseline",
+      "agent": { "id": "claude-code", "version": "2.1.0", "model": "haiku" },
+      "score": {
+        "trials": 2,
+        "passes": 1,
+        "passRate": 0.5,
+        "errors": 0,
+        "meanTokens": 150,
+        "meanDurationMs": 2000,
+        "meanCostUsd": 0.5
+      },
+      "tasks": [
+        {
+          "taskId": "t1",
+          "score": {
+            "trials": 2,
+            "passes": 1,
+            "passRate": 0.5,
+            "errors": 0,
+            "meanTokens": 150,
+            "meanDurationMs": 2000,
+            "meanCostUsd": 0.5
+          },
+          "trials": [
+            {
+              "taskId": "t1",
+              "repeatIdx": 1,
+              "status": "completed",
+              "passed": true,
+              "tokens": 100,
+              "costUsd": 0.25,
+              "durationMs": 1000,
+              "finalMessage": "done",
+              "infraError": false,
+              "transcriptPath": "runs/7/baseline__t1__1.jsonl",
+              "assertions": [{ "type": "file_exists", "passed": true, "detail": "out.txt" }]
+            },
+            {
+              "taskId": "t1",
+              "repeatIdx": 2,
+              "status": "completed",
+              "passed": false,
+              "tokens": 200,
+              "costUsd": 0.75,
+              "durationMs": 3000,
+              "finalMessage": "nope",
+              "infraError": false,
+              "transcriptPath": "runs/7/baseline__t1__2.jsonl",
+              "assertions": [
+                { "type": "file_exists", "passed": false, "detail": "missing out.txt" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "with-skill",
+      "agent": { "id": "claude-code", "version": "2.1.0", "model": "haiku" },
+      "skill": { "name": "demo", "version": "1.0.0", "digest": "sha256:skill" },
+      "score": {
+        "trials": 2,
+        "passes": 2,
+        "passRate": 1,
+        "errors": 0,
+        "meanJudgeScore": 4.5,
+        "meanTokens": 100,
+        "meanDurationMs": 1000,
+        "meanCostUsd": 0.25
+      },
+      "tasks": [
+        {
+          "taskId": "t1",
+          "score": {
+            "trials": 2,
+            "passes": 2,
+            "passRate": 1,
+            "errors": 0,
+            "meanJudgeScore": 4.5,
+            "meanTokens": 100,
+            "meanDurationMs": 1000,
+            "meanCostUsd": 0.25
+          },
+          "trials": [
+            {
+              "taskId": "t1",
+              "repeatIdx": 1,
+              "status": "completed",
+              "passed": true,
+              "tokens": 80,
+              "costUsd": 0.125,
+              "durationMs": 800,
+              "finalMessage": "done",
+              "infraError": false,
+              "transcriptPath": "runs/7/with-skill__t1__1.jsonl",
+              "assertions": [
+                { "type": "file_exists", "passed": true, "detail": "out.txt" },
+                { "type": "judge", "passed": true, "detail": "judge 4/5", "score": 4 }
+              ]
+            },
+            {
+              "taskId": "t1",
+              "repeatIdx": 2,
+              "status": "completed",
+              "passed": true,
+              "tokens": 120,
+              "costUsd": 0.375,
+              "durationMs": 1200,
+              "finalMessage": "done",
+              "infraError": false,
+              "transcriptPath": "runs/7/with-skill__t1__2.jsonl",
+              "assertions": [
+                { "type": "file_exists", "passed": true, "detail": "out.txt" },
+                { "type": "judge", "passed": true, "detail": "judge 5/5", "score": 5 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "comparisons": [
+    {
+      "kind": "skill-vs-baseline",
+      "subject": "with-skill",
+      "reference": "baseline",
+      "deltas": {
+        "passRate": 0.5,
+        "meanTokens": -50,
+        "meanDurationMs": -1000,
+        "meanCostUsd": -0.25
+      },
+      "tasks": [{ "taskId": "t1", "passRateDelta": 0.5 }],
+      "n": { "subject": 2, "reference": 2, "subjectErrors": 0, "referenceErrors": 0 },
+      "comparable": true,
+      "significant": false,
+      "verdict": "same",
+      "gate": { "minTrials": 5, "tolerance": 0.1, "excludeInfraErrors": true, "delta": 0.5 }
+    }
+  ]
+}

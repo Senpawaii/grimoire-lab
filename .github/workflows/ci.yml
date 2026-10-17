@@ -24,6 +24,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm build
       - run: pnpm test
+      - run: node scripts/smoke-consume.mjs
 
   coverage:
     if: github.event_name == 'pull_request'

@@ -4,6 +4,7 @@ import { type AssertionResult, evaluateAssertion } from "./assertions.js";
 import { runJudge } from "./judge.js";
 import type { ResultStore, TrialRecord } from "./store.js";
 import type { ResolvedTask, Suite } from "./suite.js";
+import { digestSuite } from "./suite-digest.js";
 import type { AgentAdapter, RunResult } from "./types.js";
 import type { Variant } from "./variants.js";
 import { createWorkspace, destroyWorkspace } from "./workspace.js";
@@ -20,6 +21,16 @@ export interface BenchOptions {
   repeat?: number;
   model?: string;
   onTrial?: (trial: TrialRecord) => void;
+}
+
+/**
+ * True when the harness, not the skill, failed: the adapter errored (unless it says the agent
+ * itself failed), or the judge could not deliver a verdict (a scored verdict, even a low one, is
+ * a measurement). Timeouts are skill failures: a skill that makes the agent loop should lose.
+ */
+function isInfraError(result: RunResult, assertions: AssertionResult[]): boolean {
+  if (result.status === "error") return result.errorKind !== "agent";
+  return assertions.some((a) => a.type === "judge" && !a.passed && a.score === undefined);
 }
 
 const fileStem = (variant: string, taskId: string, repeatIdx: number) =>
@@ -90,6 +101,7 @@ async function runTrial(
     durationMs: result.durationMs,
     finalMessage: result.finalMessage,
     error: result.error,
+    infraError: isInfraError(result, assertions),
     transcriptPath: `${runRel}/${stem}.jsonl`,
     assertions,
   };
@@ -111,11 +123,15 @@ export async function runBench(o: BenchOptions): Promise<number> {
     throw new Error(`Agent "${o.adapter.id}" is not available on this machine`);
 
   const repeat = o.repeat ?? o.suite.repeat;
+  const suiteDigest = await digestSuite(o.suite);
   const runId = o.store.createRun({
     suite: o.suite.name,
     agent: o.adapter.id,
     agentVersion: detected.version,
     model: o.model,
+    suiteDigest,
+    taskIds: o.suite.tasks.map((t) => t.id),
+    repeat,
     variants: o.variants.map((v) => ({
       label: v.label,
       skillName: v.skill?.name,

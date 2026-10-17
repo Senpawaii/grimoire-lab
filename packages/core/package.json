@@ -1,18 +1,31 @@
 {
   "name": "@grimoire/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Benchmark agent skills: load skills, run suites against an agent, and read versioned results.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Senpawaii/grimoire-lab.git",
+    "directory": "packages/core"
+  },
   "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.13"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
-    "!dist/**/*.test.*"
+    "!dist/**/*.test.*",
+    "!dist/**/*.map"
   ],
   "dependencies": {
     "execa": "^10.0.1",
