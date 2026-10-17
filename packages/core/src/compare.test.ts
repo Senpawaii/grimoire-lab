@@ -6,6 +6,7 @@ import {
   deriveKind,
   evidenceFor,
   IncomparableArms,
+  newcombeInterval,
   SuiteMismatch,
 } from "./compare.js";
 import { type ArmResult, type BenchResult, scoreTrials, type TrialResult } from "./result.js";
@@ -114,7 +115,13 @@ describe("compare: verdict", () => {
     const base = ref(baseline({ a: [0, 2, 0] }));
     const c = compare(small, base);
     expect(c).toMatchObject({ significant: false, verdict: "same" });
-    expect(c.gate).toEqual({ minTrials: 5, tolerance: 0.1, excludeInfraErrors: true, delta: 1 });
+    expect(c.gate).toEqual({
+      minTrials: 5,
+      tolerance: 0.1,
+      excludeInfraErrors: true,
+      requireCiExcludesZero: false,
+      delta: 1,
+    });
     expect(compare(small, base, { minTrials: 2 })).toMatchObject({
       significant: true,
       verdict: "better",
@@ -163,6 +170,16 @@ describe("compare: verdict", () => {
     expect(c.gate).not.toHaveProperty("delta");
   });
 
+  it("has no ci when a side has no countable trials", () => {
+    const c = compare(ref(skillArm({ a: [0, 0, 6] })), ref(baseline({ a: [5, 5, 0] })));
+    expect(c).not.toHaveProperty("ci");
+    expect(
+      compare(ref(skillArm({ a: [0, 0, 6] })), ref(baseline({ a: [5, 5, 0] })), {
+        requireCiExcludesZero: true,
+      }).significant,
+    ).toBe(false);
+  });
+
   it("validates the gate options", () => {
     const s = ref(skillArm({ a: [1, 0, 0] }));
     const b = ref(baseline({ a: [0, 1, 0] }));
@@ -170,6 +187,93 @@ describe("compare: verdict", () => {
     expect(() => compare(s, b, { minTrials: 1.5 })).toThrow(RangeError);
     expect(() => compare(s, b, { tolerance: -0.1 })).toThrow(RangeError);
     expect(() => compare(s, b, { tolerance: 2 })).toThrow(RangeError);
+  });
+});
+
+describe("newcombeInterval", () => {
+  it("matches Newcombe (1998) example: 56/70 vs 48/80 -> (0.0524, 0.3339)", () => {
+    const { lower, upper } = newcombeInterval(56, 70, 48, 80);
+    expect(lower).toBeCloseTo(0.0524, 4);
+    expect(upper).toBeCloseTo(0.3339, 4);
+  });
+
+  it("0/n vs 0/n is symmetric around 0 with Wilson's upper bound z^2/(n+z^2)", () => {
+    const { lower, upper } = newcombeInterval(0, 10, 0, 10);
+    expect(upper).toBeCloseTo(0.2775328, 6);
+    expect(lower).toBeCloseTo(-0.2775328, 6);
+  });
+
+  it("n/n vs 0/n: lower bound above 0, upper clamped to 1; and the mirror image", () => {
+    const up = newcombeInterval(10, 10, 0, 10);
+    expect(up.lower).toBeCloseTo(0.6075094, 6);
+    expect(up.upper).toBe(1);
+    const down = newcombeInterval(0, 10, 10, 10);
+    expect(down.lower).toBe(-1);
+    expect(down.upper).toBeCloseTo(-0.6075094, 6);
+  });
+
+  it("tiny n is wide: 1/1 vs 0/1", () => {
+    const { lower, upper } = newcombeInterval(1, 1, 0, 1);
+    expect(lower).toBeCloseTo(-0.1221087, 6);
+    expect(upper).toBe(1);
+  });
+});
+
+describe("compare: ci", () => {
+  it("is a 95% newcombe-wilson interval around the gate delta, recorded in the result", () => {
+    const c = compare(ref(skillArm({ a: [8, 2, 0] })), ref(baseline({ a: [2, 8, 0] })));
+    expect(c.ci).toMatchObject({ level: 0.95, method: "newcombe-wilson" });
+    expect(c.ci?.lower).toBeCloseTo(0.1618236, 6);
+    expect(c.ci?.upper).toBeCloseTo(0.802682, 6);
+    expect(c.gate.requireCiExcludesZero).toBe(false);
+  });
+
+  it("excludes infra errors by default (and counts them as failures when asked)", () => {
+    // 8 passes, 2 failures, 10 infra errors vs 2 passes, 8 failures.
+    const sub = ref(skillArm({ a: [8, 2, 10] }));
+    const base = ref(baseline({ a: [2, 8, 0] }));
+    const excluded = compare(sub, base);
+    expect(excluded.ci?.lower).toBeCloseTo(0.1618236, 6);
+    const included = compare(sub, base, { excludeInfraErrors: false });
+    expect(included.ci?.lower).toBeLessThan(excluded.ci?.lower ?? 0);
+    expect(included.ci?.upper).toBeCloseTo(newcombeInterval(8, 20, 2, 10).upper, 12);
+  });
+
+  it("does not change significant/verdict by default, even when the interval spans zero", () => {
+    // 4/5 vs 2/5: delta 0.4 passes the gate but the interval includes 0.
+    const c = compare(ref(skillArm({ a: [4, 1, 0] })), ref(baseline({ a: [2, 3, 0] })));
+    expect(c.ci?.lower).toBeLessThan(0);
+    expect(c).toMatchObject({ significant: true, verdict: "better" });
+  });
+
+  it("requireCiExcludesZero withholds significance when the interval includes zero", () => {
+    const sub = ref(skillArm({ a: [4, 1, 0] }));
+    const base = ref(baseline({ a: [2, 3, 0] }));
+    const strict = compare(sub, base, { requireCiExcludesZero: true });
+    expect(strict).toMatchObject({ significant: false, verdict: "same" });
+    expect(strict.gate.requireCiExcludesZero).toBe(true);
+  });
+
+  it("requireCiExcludesZero keeps significance when the interval excludes zero, in both directions", () => {
+    const strong = ref(skillArm({ a: [18, 2, 0] }));
+    const weak = ref(baseline({ a: [4, 16, 0] }));
+    expect(compare(strong, weak, { requireCiExcludesZero: true })).toMatchObject({
+      verdict: "better",
+    });
+    const weakSkill = ref(skillArm({ a: [4, 16, 0] }));
+    const strongBase = ref(baseline({ a: [18, 2, 0] }));
+    expect(compare(weakSkill, strongBase, { requireCiExcludesZero: true })).toMatchObject({
+      verdict: "worse",
+    });
+  });
+
+  it("is well-defined for identical 0/n and n/n arms", () => {
+    const zero = compare(ref(skillArm({ a: [0, 10, 0] })), ref(baseline({ a: [0, 10, 0] })));
+    expect(zero.ci?.lower).toBeCloseTo(-0.2775328, 6);
+    const full = compare(ref(skillArm({ a: [10, 0, 0] })), ref(baseline({ a: [10, 0, 0] })), {
+      requireCiExcludesZero: true,
+    });
+    expect(full).toMatchObject({ significant: false, verdict: "same" });
   });
 });
 

@@ -143,7 +143,19 @@
       "comparable": true,
       "significant": false,
       "verdict": "same",
-      "gate": { "minTrials": 5, "tolerance": 0.1, "excludeInfraErrors": true, "delta": 0.5 }
+      "gate": {
+        "minTrials": 5,
+        "tolerance": 0.1,
+        "excludeInfraErrors": true,
+        "requireCiExcludesZero": false,
+        "delta": 0.5
+      },
+      "ci": {
+        "level": 0.95,
+        "method": "newcombe-wilson",
+        "lower": -0.2725727851131816,
+        "upper": 0.9054687942657693
+      }
     }
   ]
 }
