@@ -14,6 +14,8 @@ All notable changes to `@grimoire/core` (and the CLI built on it). Format follow
 
 ## Unreleased
 
+## 0.1.0 - 2026-10-17
+
 Library work for Heartwood integration (design: `docs/design/library-api.md`):
 
 - Packaging (#18): `@grimoire/core` is an installable ESM package at `0.1.0` with `exports`/`types`,
