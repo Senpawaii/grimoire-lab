@@ -70,6 +70,38 @@ describe("bench", () => {
     ).rejects.toThrow(/positive integer/);
   });
 
+  it("--concurrency runs trials in parallel and rejects a non-positive value", async () => {
+    const skillDir = await scaffoldSkill("demo", tmp);
+    const out = join(tmp, "out");
+    const lines: string[] = [];
+    await createProgram(
+      (l) => lines.push(l),
+      () => fake(),
+    ).parseAsync([
+      "node",
+      "grimoire",
+      "bench",
+      skillDir,
+      "--repeat",
+      "3",
+      "--concurrency",
+      "4",
+      "--out",
+      out,
+    ]);
+    expect(lines.filter((l) => l.includes("example #"))).toHaveLength(6);
+    const store = new ResultStore(join(out, "results.db"));
+    expect(store.getResult(1)?.arms.map((a) => a.score.trials)).toEqual([3, 3]);
+    store.close();
+
+    await expect(
+      createProgram(
+        () => {},
+        () => fake(),
+      ).parseAsync(["node", "grimoire", "bench", skillDir, "--concurrency", "0"]),
+    ).rejects.toThrow(/positive integer/);
+  });
+
   it("--against compares two versions of the skill instead of the baseline", async () => {
     const skillDir = await scaffoldSkill("demo", tmp);
     const oldDir = await scaffoldSkill("demo", join(tmp, "old"));

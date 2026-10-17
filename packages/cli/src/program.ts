@@ -6,15 +6,21 @@ import {
   benchProposal,
   benchSkill,
   buildVariants,
+  DigestMismatch,
   dirSource,
   formatReport,
   formatTrialLine,
   gitSource,
   loadSkill,
+  loadSkillByDigest,
   loadSuite,
   ResultStore,
+  ResumeMismatch,
   resolveAgainst,
   resolveSkill,
+  resumeBench,
+  type Skill,
+  SkillNotFound,
   type SkillSource,
 } from "@grimoire/core";
 import { Command, InvalidArgumentError } from "commander";
@@ -61,6 +67,7 @@ export function createProgram(
       "compare with another skill directory, or a git ref/tag (a bare semver means tag <skill>@<semver>)",
     )
     .option("--repeat <n>", "trials per task and variant (overrides the suite)", positiveInt)
+    .option("--concurrency <n>", "trials to run in parallel", positiveInt, 1)
     .option("--model <model>", "model passed to the agent")
     .option("--agent <id>", "agent adapter", "claude-code")
     .option("--out <dir>", "output directory", ".grimoire")
@@ -71,6 +78,7 @@ export function createProgram(
           suite?: string;
           against?: string;
           repeat?: number;
+          concurrency: number;
           model?: string;
           agent: string;
           out: string;
@@ -95,6 +103,7 @@ export function createProgram(
             adapter,
             against: against?.skill,
             repeat,
+            concurrency: opts.concurrency,
             model: opts.model,
             outDir,
             store,
@@ -116,6 +125,7 @@ export function createProgram(
     .requiredOption("--candidate <dir>", "directory of the edited candidate (see stageCandidate)")
     .option("--suite <file>", "suite file (default: <skillDir>/grimoire.bench.yaml)")
     .option("--repeat <n>", "trials per task and variant (overrides the suite)", positiveInt)
+    .option("--concurrency <n>", "trials to run in parallel", positiveInt, 1)
     .option("--model <model>", "model passed to the agent")
     .option("--agent <id>", "agent adapter", "claude-code")
     .option("--out <dir>", "output directory", ".grimoire")
@@ -123,6 +133,7 @@ export function createProgram(
       async (
         skillDir: string,
         opts: {
+          concurrency: number;
           candidate: string;
           suite?: string;
           repeat?: number;
@@ -149,6 +160,7 @@ export function createProgram(
             suite,
             adapter,
             repeat,
+            concurrency: opts.concurrency,
             model: opts.model,
             outDir,
             store,
@@ -163,6 +175,95 @@ export function createProgram(
           );
         } finally {
           store.close();
+        }
+      },
+    );
+
+  program
+    .command("resume <runId>")
+    .description(
+      "Finish an aborted or crashed run: runs only its missing trials, appends them to the same run and prints the report",
+    )
+    .option(
+      "--suite <file>",
+      "suite file (default: grimoire.bench.yaml of the newest skill in the run)",
+    )
+    .option(
+      "--skill <dir>",
+      "directory of a skill the run used (repeatable); others are looked up by digest",
+      (dir: string, dirs: string[]) => [...dirs, dir],
+      [] as string[],
+    )
+    .option("--dir <path>", "directory of skill folders to look skills up in", DEFAULT_SKILLS_DIR)
+    .option(
+      "--git <repo>",
+      "also look skills up in this git repository (HEAD and name@semver tags); see --git-path",
+    )
+    .option("--git-path <path>", "skills directory inside the --git repository", DEFAULT_SKILLS_DIR)
+    .option("--concurrency <n>", "trials to run in parallel", positiveInt, 1)
+    .option("--agent <id>", "agent adapter (default: the one the run used)")
+    .option("--out <dir>", "output directory", ".grimoire")
+    .action(
+      async (
+        runArg: string,
+        opts: {
+          suite?: string;
+          skill: string[];
+          dir: string;
+          git?: string;
+          gitPath: string;
+          concurrency: number;
+          agent?: string;
+          out: string;
+        },
+      ) => {
+        const runId = positiveInt(runArg);
+        const outDir = resolve(opts.out);
+        const store = new ResultStore(join(outDir, "results.db"));
+        const disposers: (() => Promise<void>)[] = [];
+        try {
+          const run = store.getRun(runId);
+          if (!run) throw new Error(`No run with id ${runId}`);
+          const sources: SkillSource[] = [dirSource(opts.dir)];
+          if (opts.git) sources.push(gitSource({ repo: opts.git, path: opts.gitPath }));
+          const skills: Skill[] = await Promise.all(opts.skill.map((d) => loadSkill(d)));
+          for (const v of run.variants) {
+            const digest = v.skillDigest;
+            if (digest === undefined || skills.some((s) => s.digest === digest)) continue;
+            try {
+              const loaded = await loadSkillByDigest(digest, sources);
+              disposers.push(loaded.dispose);
+              skills.push(loaded.skill);
+            } catch (err) {
+              if (!(err instanceof SkillNotFound || err instanceof DigestMismatch)) throw err;
+              throw new ResumeMismatch(
+                "skill",
+                `Run ${runId} variant "${v.label}" used skill ${v.skillName ?? "?"} ${digest}, which is not available any more (${err.message}). Point --skill, --dir or --git at the exact version.`,
+              );
+            }
+          }
+          const newest = run.variants.findLast((v) => v.skillDigest !== undefined);
+          const newestSkill = skills.find((s) => s.digest === newest?.skillDigest);
+          const suiteFile =
+            opts.suite ?? (newestSkill ? join(newestSkill.dir, "grimoire.bench.yaml") : undefined);
+          if (!suiteFile) throw new Error("Run has no skill arm to find a suite for: pass --suite");
+          const suite = await loadSuite(suiteFile);
+          const adapter = resolveAdapter(opts.agent ?? run.agent);
+          log(`Resuming run ${runId} (${suite.name}) on ${adapter.id}`);
+          const result = await resumeBench({
+            runId,
+            store,
+            suite,
+            skills,
+            adapter,
+            outDir,
+            concurrency: opts.concurrency,
+            onTrial: (t, arm) => log(formatTrialLine(t, arm)),
+          });
+          logReport(result, outDir);
+        } finally {
+          store.close();
+          for (const dispose of disposers) await dispose();
         }
       },
     );

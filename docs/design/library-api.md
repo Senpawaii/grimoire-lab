@@ -42,6 +42,7 @@ interface BenchSkillOptions {
   outDir: string;               // transcripts
   store?: ResultStore;          // optional persistence
   onTrial?: (t: TrialResult, arm: string) => void;   // arm = label of the arm the trial ran on
+  concurrency?: number;         // trials in flight, default 1
   signal?: AbortSignal;
 }
 function benchSkill(o: BenchSkillOptions): Promise<BenchResult>;
@@ -54,6 +55,13 @@ function benchSkill(o: BenchSkillOptions): Promise<BenchResult>;
   and no longer needs consumers to reassemble rows. The SQLite schema version is internal and is
   independent of the result schema version below.
 - `onTrial` is the only progress hook; `AbortSignal` is the only cancellation mechanism.
+- `concurrency?: number` (default 1) bounds in-flight trials; trials start in task, repeat, arm order and
+  finish in completion order, the `BenchResult` is unchanged. Abort drains running trials (they are
+  stored) and starts no new ones.
+- `resumeBench({ runId, store, suite, skills, adapter, outDir, concurrency?, onTrial?, signal? }):
+  Promise<BenchResult>` re-runs only the missing (arm, task, repeat) trials of a stored run and appends
+  them to it. It requires the stored suite digest, skill digests and agent id to match the supplied ones
+  (typed `ResumeMismatch`, `kind: "suite" | "skill" | "agent"`); a complete run is a no-op.
 - Everything public is exported from `index.ts`; nothing under `dist/*` is part of the API.
 
 ## 2. Benchmark result schema (versioned)

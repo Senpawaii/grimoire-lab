@@ -79,6 +79,29 @@ as a version-vs-version comparison, prints the usual report, then the verdict of
 the current version (pass-rate delta, `n`, infra errors, and the threshold gate it was judged by).
 Promotion is yours: the command only measures. Identical contents are rejected.
 
+### Parallel trials and resuming
+
+```sh
+grimoire bench grimoire/skills/demo --repeat 5 --concurrency 4     # also on `propose`
+grimoire resume 3                                                  # finish run 3 after an abort or crash
+grimoire resume 3 --skill ../old-checkout/demo --concurrency 4
+```
+
+`--concurrency <n>` (positive integer, default 1) runs up to `n` trials at once. Starting order and
+the result are the same as sequentially; only completion order (the per-trial lines) differs. Ctrl+C
+is not a graceful abort in the CLI: a killed process leaves the trials stored so far, which is exactly
+what `resume` picks up (a trial that was running when the process died is simply missing and is run
+again).
+
+`grimoire resume <runId>` runs only the trials of run `<runId>` that have no stored result, appends them
+to that run, and prints the usual report. Everything it needs comes from the run and from your files
+matching what was recorded: skills are found by digest (`--skill <dir>`, repeatable; otherwise
+`--dir`, default `grimoire/skills`, and `--git <repo> --git-path`, as in `resolve`), the suite is the
+one next to the newest skill unless you pass `--suite <file>`, and the agent and model are the
+run's (`--agent` can only repeat the same agent). If the suite or a skill no longer matches its stored
+digest, or the agent differs, it refuses with `ResumeMismatch` and runs nothing. Resuming a complete
+run just prints its report.
+
 ### Pinning a skill
 
 ```sh
@@ -166,6 +189,7 @@ A `results.db` from schema v2 is upgraded in place; v1 databases are still refus
 4. Assertions run against the workspace and the normalized transcript.
 
 Variants are interleaved within each repeat so drift (rate limits, load) affects all of them equally.
+With `--concurrency` the same order is the order trials start in.
 
 Limits:
 
@@ -173,7 +197,9 @@ Limits:
   `--permission-mode bypassPermissions`; do not benchmark skills you do not trust.
 - Credential isolation needs a `.credentials.json` in your Claude config dir (Windows/Linux) or
   `ANTHROPIC_API_KEY`. macOS keychain logins are not supported yet.
-- Trials are non-deterministic and run sequentially; small repeat counts give noisy pass rates.
+- Trials are non-deterministic; small repeat counts give noisy pass rates. They run one at a time unless
+  you pass `--concurrency`; parallel trials share your plan's rate limits and the machine, so a large
+  value can add infrastructure errors and timeouts that a sequential run would not see.
 - Benchmarks consume your Claude plan's usage limits.
 
 ## Using as a library
@@ -221,7 +247,7 @@ try {
     adapter, // injected: core never imports an adapter
     outDir: ".grimoire", // transcripts
     repeat: 5,
-    signal: AbortSignal.timeout(60 * 60 * 1000), // optional; checked between trials
+    signal: AbortSignal.timeout(60 * 60 * 1000), // optional; no new trial starts after it fires
   });
 
   // 3. `result` is a plain, JSON-serializable BenchResult; evidenceFor looks up one skill's numbers.
@@ -232,13 +258,41 @@ try {
 }
 ```
 
-`benchSkill({ skill, suite, adapter, outDir, against?, baseline?, repeat?, model?, store?, onTrial?,
-signal? })` runs baseline vs the skill (default), or `against` vs the skill (version-vs-version, no
+`benchSkill({ skill, suite, adapter, outDir, against?, baseline?, repeat?, model?, concurrency?, store?,
+onTrial?, signal? })` runs baseline vs the skill (default), or `against` vs the skill (version-vs-version, no
 baseline unless `baseline: true`, which makes three arms and three comparisons). Without a `store`
 the run is kept in a private in-memory database and the `BenchResult` is the only output; pass a
 `ResultStore` to persist it (and to keep the trials of an aborted run). `onTrial(trial, armLabel)` is
-the only progress hook. Aborting `signal` stops between trials and rejects with an `AbortError`
-(`signal.reason`); a running trial is not interrupted.
+the only progress hook.
+
+`concurrency` (positive integer, default 1; anything else throws a `RangeError` before running) bounds
+how many trials are in flight. Trials start in the order task, repeat, arm, so arms stay interleaved
+within each repeat; they finish, are stored and reach `onTrial` in completion order, and the
+`BenchResult` has the same shape and ordering as a sequential run. Your adapter must tolerate that many
+simultaneous runs (each trial has its own workspace; the SQLite store is written synchronously, so
+workers never interleave inside a write).
+
+Aborting `signal` starts no new trial; trials already running are not interrupted, they finish and are
+stored, and then the promise rejects with `signal.reason` (an `AbortError` for a plain `abort()`). The
+same drain happens when `onTrial` or a store write throws: the first error is rethrown.
+
+```ts
+import { resumeBench } from "@grimoire/core";
+
+// store: the ResultStore passed to the aborted/crashed benchSkill; runId: its run id (BenchResult.id)
+const complete = await resumeBench({ runId: 1, store, suite, skills: [skill], adapter, outDir: ".grimoire" });
+```
+
+`resumeBench({ runId, store, suite, skills, adapter, outDir, concurrency?, onTrial?, signal? })` runs
+only the (arm, task, repeat) trials the run has no stored result for, appends them to the same run
+(transcripts go to the same `runs/<id>/`) and returns the complete `BenchResult`. The model and repeat
+count come from the run. Before running anything it checks that the supplied `suite` still hashes to
+the run's stored suite digest, that `skills` contains every skill digest the arms used (matched by
+digest, extras ignored; load them fresh, see `loadSkillByDigest`) and that `adapter.id` is the run's
+agent; otherwise it throws `ResumeMismatch` with `kind` `"suite"`, `"skill"` or `"agent"`. A run with
+nothing missing is returned as is without calling the adapter, so resuming is idempotent. Stored
+trials are never re-run, infrastructure errors included; runs recorded before suite digests were
+stored (internal schema v3 and older) cannot be resumed.
 
 Everything public is exported from `packages/core/src/index.ts`; `exports` blocks deep imports, so
 nothing under `dist/*` is API. Core never imports `@grimoire/adapters`: you pass an `AgentAdapter`

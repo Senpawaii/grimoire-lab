@@ -6,6 +6,8 @@ export {
   type BenchSkillOptions,
   benchProposal,
   benchSkill,
+  type ResumeBenchOptions,
+  resumeBench,
 } from "./bench.js";
 export {
   type ArmRef,
@@ -21,7 +23,7 @@ export {
   SuiteMismatch,
 } from "./compare.js";
 export { digestDir } from "./digest.js";
-export { type BenchOptions, runBench } from "./engine.js";
+export { type BenchOptions, ResumeMismatch, runBench } from "./engine.js";
 export { buildJudgePrompt, type JudgeInput, parseVerdict, runJudge } from "./judge.js";
 export {
   NoChange,
