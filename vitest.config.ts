@@ -11,6 +11,8 @@ export default defineConfig({
     },
   },
   test: {
+    // Windows CI runners are slow; the default 5s flakes on SQLite/git-heavy tests.
+    testTimeout: 20_000,
     include: ["packages/*/src/**/*.test.ts"],
     coverage: {
       provider: "v8",
