@@ -1,0 +1,44 @@
+name: Release
+
+# Push a tag `vX.Y.Z` (it must equal packages/core/package.json's version and have a matching
+# `## X.Y.Z` section in CHANGELOG.md) to build, verify and publish a GitHub release with the
+# @grimoire/core tarball attached. Nothing is published to npm.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Validate tag and extract release notes
+        run: node scripts/release-notes.mjs "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm test
+      - run: node scripts/smoke-consume.mjs
+      - name: Pack @grimoire/core
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          pnpm pack --pack-destination "$RUNNER_TEMP/dist"
+        working-directory: packages/core
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/*.tgz \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --verify-tag $prerelease

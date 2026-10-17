@@ -230,6 +230,22 @@ generates no content: without a rewriter it throws `RewriterNotAvailable`, and i
 nothing it throws `NoChange`. Benchmark `proposal.skill` against the current skill as a version-vs-version
 comparison, then apply your own promotion policy.
 
+## Releasing
+
+Releases are GitHub releases cut from tags; nothing is published to npm. Only `@grimoire/core` is
+versioned (its `package.json` version is the repo version; the CLI and adapters stay `0.0.0`).
+
+1. Bump `version` in `packages/core/package.json` and rename `## Unreleased` in `CHANGELOG.md` to
+   `## <version> - <date>` (add a fresh empty `## Unreleased` above it). Merge via a PR.
+2. Tag the merge commit and push the tag: `git tag v<version> && git push origin v<version>`.
+3. `.github/workflows/release.yml` checks the tag equals the package version and has a changelog
+   section, runs lint, build, tests and the consume smoke test, then creates the GitHub release with
+   that changelog section as notes and the `@grimoire/core` tarball attached. Tags containing `-`
+   (for example `v0.2.0-rc.1`) are marked pre-release.
+
+Consume a release with `pnpm add https://github.com/Senpawaii/grimoire-lab/releases/download/v<version>/grimoire-core-<version>.tgz`.
+Skill version tags (`<skill>@<semver>`, used by `--against`) are a separate namespace and do not trigger releases.
+
 ## Development
 
 ```sh
