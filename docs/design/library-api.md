@@ -41,7 +41,7 @@ interface BenchSkillOptions {
   repeat?: number; model?: string;
   outDir: string;               // transcripts
   store?: ResultStore;          // optional persistence
-  onTrial?: (t: TrialResult) => void;
+  onTrial?: (t: TrialResult, arm: string) => void;   // arm = label of the arm the trial ran on
   signal?: AbortSignal;
 }
 function benchSkill(o: BenchSkillOptions): Promise<BenchResult>;
@@ -226,17 +226,17 @@ function stageCandidate(current: Skill, destDir: string, opts?: { version?: stri
 // copies the skill's files (not the suite) to destDir; optionally rewrites frontmatter `version`.
 // Whoever edits (a human or an LLM agent) edits destDir afterwards. Core does not generate content.
 
-interface ProposeOptions extends Omit<BenchSkillOptions, "skill" | "against"> {
+interface BenchProposalOptions extends Omit<BenchSkillOptions, "skill" | "against"> {
   current: Skill;
   candidate: Skill;              // loadSkill(destDir) after editing
   baseline?: boolean;            // default false; true adds a no-skill arm (3 arms, 3 comparisons)
 }
-interface Proposal {
+interface BenchProposal {
   current: SkillRef; candidate: SkillRef;
   result: BenchResult;
   comparison: Comparison;        // kind "version-vs-version", subject = candidate, reference = current
 }
-function benchProposal(o: ProposeOptions): Promise<Proposal>;
+function benchProposal(o: BenchProposalOptions): Promise<BenchProposal>;
 ```
 
 - A candidate is identified by its digest. There is no registry or draft-state object. It is a

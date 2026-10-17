@@ -4,6 +4,9 @@ import { join, resolve } from "node:path";
 
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/** Where `new` scaffolds and `resolve` looks by default; `.claude/skills` works via `--dir`. */
+export const DEFAULT_SKILLS_DIR = join("grimoire", "skills");
+
 const skillMd = (name: string) => `---
 name: ${name}
 description: Use when <describe the situation that should trigger this skill>.

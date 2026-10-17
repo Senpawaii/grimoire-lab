@@ -27,9 +27,27 @@ Library work for Heartwood integration (design: `docs/design/library-api.md`):
   `BenchResult` because they have no suite digest).
 - `compare(subject, reference, opts?)` (#16) with `verdict`/`significant` from a documented threshold
   gate (not a statistical test), `deriveKind`, `armRef`, `evidenceFor`. Replaces the design doc's
-  `compareArms`. `benchSkill` is still to come: see design doc section 1.
+  `compareArms`.
 - Skill catalog and digest-pinned resolution across sources (#14): `SkillRef`, `resolveSkill`,
   `loadSkillByDigest`, `dirSource`, `gitSource`.
 - Version proposals (#17): `proposeVersion(skill, basis, { rewriter })` with an injected
   `SkillRewriter`, typed `RewriterNotAvailable`/`NoChange`, and `stageCandidate` (design doc section 6).
-  `benchProposal` is still to come.
+- `benchSkill` and `benchProposal` (#21): the orchestration that used to live in the CLI is now
+  `benchSkill({ skill, suite, adapter, outDir, against?, baseline?, repeat?, model?, store?, onTrial?,
+  signal? })`, which returns the `BenchResult` with its comparisons (baseline-vs-skill, or
+  version-vs-version; three arms with `baseline: true`). Without a `store` it uses a private in-memory
+  one. `signal` stops between trials and rejects with an `AbortError`; stored trials stay (`runBench`
+  gained the same `signal` option). `benchProposal({ current, candidate, ... })` returns
+  `{ current, candidate, result, comparison }` (candidate vs current). The proposal types are
+  `BenchProposal`/`BenchProposalOptions`: `Proposal`/`ProposeOptions` already name `proposeVersion`'s.
+- Breaking, `0.x` (#21): `formatReport(result)` and `summarize(result)` now take a `BenchResult`
+  instead of `(run, trials)`, and `formatTrialLine(trial, arm)` takes a `TrialResult` plus the arm
+  label (the CLI prints through them; output is unchanged). `onTrial` of `benchSkill` is
+  `(trial: TrialResult, arm: string)`.
+- CLI: `bench` calls `benchSkill`. New thin commands `grimoire propose <skillDir> --candidate <dir>`
+  (report plus the candidate-vs-current verdict), `grimoire resolve <ref> [--dir] [--git <repo>
+  --git-path]` (prints `name@version digest`) and `grimoire report --json` (the stored `BenchResult`).
+- Breaking, CLI (#21): the default skills directory is now `grimoire/skills/` (was `.claude/skills/`) for
+  `grimoire new` and `grimoire resolve`; `.claude/skills` still works with `--dir`. `grimoire bench`
+  takes the skill path as before. `grimoire report` needs a run recorded with a suite digest
+  (internal schema v4+); older runs fail with an explanatory error instead of printing.
