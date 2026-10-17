@@ -1,6 +1,6 @@
 {
   "name": "@grimoire/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Benchmark agent skills: load skills, run suites against an agent, and read versioned results.",
   "license": "MIT",
   "repository": {

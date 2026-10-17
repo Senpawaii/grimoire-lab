@@ -14,6 +14,8 @@ All notable changes to `@grimoire/core` (and the CLI built on it). Format follow
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-18
+
 ### Added
 
 - `Comparison.ci` (#25): optional 95% Newcombe-Wilson interval for the pass-rate delta, computed in
