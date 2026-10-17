@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { getAdapter } from "@grimoire/adapters";
+import { getAdapter, loadCommandConfig } from "@grimoire/adapters";
 import {
   type AgentAdapter,
   type BenchResult,
@@ -35,7 +35,7 @@ function positiveInt(value: string): number {
 /** `resolveAdapter` is injectable so tests can bench without a real agent CLI. */
 export function createProgram(
   log: (line: string) => void = console.log,
-  resolveAdapter: (id: string) => AgentAdapter = getAdapter,
+  resolveAdapter: (id: string, opts?: { config?: unknown }) => AgentAdapter = getAdapter,
 ): Command {
   const program = new Command("grimoire")
     .description("Benchmark agent skills against a no-skill baseline")
@@ -45,6 +45,23 @@ export function createProgram(
     log("");
     log(formatReport(result));
     log(`\nSaved to ${join(outDir, "runs", result.id)}`);
+  };
+
+  /** `--agent-config` configures the generic `command` adapter; it is meaningless for any other. */
+  const adapterFor = async (agent: string, agentConfig?: string): Promise<AgentAdapter> => {
+    if (agentConfig === undefined) return resolveAdapter(agent);
+    if (agent !== "command") {
+      throw new Error(
+        `--agent-config configures the command adapter: pass --agent command (got --agent ${agent})`,
+      );
+    }
+    const config = await loadCommandConfig(agentConfig);
+    if (config.skillDir === undefined) {
+      log(
+        "warning: the agent config has no skillDir, so skills are never installed: skill and baseline runs are identical and a comparison between them is not meaningful",
+      );
+    }
+    return resolveAdapter(agent, { config });
   };
 
   program
@@ -69,7 +86,15 @@ export function createProgram(
     .option("--repeat <n>", "trials per task and variant (overrides the suite)", positiveInt)
     .option("--concurrency <n>", "trials to run in parallel", positiveInt, 1)
     .option("--model <model>", "model passed to the agent")
-    .option("--agent <id>", "agent adapter", "claude-code")
+    .option(
+      "--agent <id>",
+      "agent adapter (claude-code, or command with --agent-config)",
+      "claude-code",
+    )
+    .option(
+      "--agent-config <file>",
+      "JSON or YAML config of the command adapter (requires --agent command)",
+    )
     .option("--out <dir>", "output directory", ".grimoire")
     .action(
       async (
@@ -81,12 +106,13 @@ export function createProgram(
           concurrency: number;
           model?: string;
           agent: string;
+          agentConfig?: string;
           out: string;
         },
       ) => {
         const skill = await loadSkill(skillDir);
         const suite = await loadSuite(opts.suite ?? join(skill.dir, "grimoire.bench.yaml"));
-        const adapter = resolveAdapter(opts.agent);
+        const adapter = await adapterFor(opts.agent, opts.agentConfig);
         const against = opts.against ? await resolveAgainst(skill, opts.against) : undefined;
         const outDir = resolve(opts.out);
         let store: ResultStore | undefined;
@@ -127,7 +153,15 @@ export function createProgram(
     .option("--repeat <n>", "trials per task and variant (overrides the suite)", positiveInt)
     .option("--concurrency <n>", "trials to run in parallel", positiveInt, 1)
     .option("--model <model>", "model passed to the agent")
-    .option("--agent <id>", "agent adapter", "claude-code")
+    .option(
+      "--agent <id>",
+      "agent adapter (claude-code, or command with --agent-config)",
+      "claude-code",
+    )
+    .option(
+      "--agent-config <file>",
+      "JSON or YAML config of the command adapter (requires --agent command)",
+    )
     .option("--out <dir>", "output directory", ".grimoire")
     .action(
       async (
@@ -139,13 +173,14 @@ export function createProgram(
           repeat?: number;
           model?: string;
           agent: string;
+          agentConfig?: string;
           out: string;
         },
       ) => {
         const current = await loadSkill(skillDir);
         const candidate = await loadSkill(opts.candidate);
         const suite = await loadSuite(opts.suite ?? join(current.dir, "grimoire.bench.yaml"));
-        const adapter = resolveAdapter(opts.agent);
+        const adapter = await adapterFor(opts.agent, opts.agentConfig);
         const outDir = resolve(opts.out);
         const variants = buildVariants(candidate, current);
         const repeat = opts.repeat ?? suite.repeat;
@@ -202,6 +237,10 @@ export function createProgram(
     .option("--git-path <path>", "skills directory inside the --git repository", DEFAULT_SKILLS_DIR)
     .option("--concurrency <n>", "trials to run in parallel", positiveInt, 1)
     .option("--agent <id>", "agent adapter (default: the one the run used)")
+    .option(
+      "--agent-config <file>",
+      "JSON or YAML config of the command adapter (implies --agent command); its id must match the run's agent",
+    )
     .option("--out <dir>", "output directory", ".grimoire")
     .action(
       async (
@@ -214,6 +253,7 @@ export function createProgram(
           gitPath: string;
           concurrency: number;
           agent?: string;
+          agentConfig?: string;
           out: string;
         },
       ) => {
@@ -248,7 +288,16 @@ export function createProgram(
             opts.suite ?? (newestSkill ? join(newestSkill.dir, "grimoire.bench.yaml") : undefined);
           if (!suiteFile) throw new Error("Run has no skill arm to find a suite for: pass --suite");
           const suite = await loadSuite(suiteFile);
-          const adapter = resolveAdapter(opts.agent ?? run.agent);
+          const agent = opts.agent ?? (opts.agentConfig ? "command" : run.agent);
+          let adapter: AgentAdapter;
+          try {
+            adapter = await adapterFor(agent, opts.agentConfig);
+          } catch (err) {
+            if (opts.agent !== undefined || opts.agentConfig !== undefined) throw err;
+            throw new Error(
+              `${err instanceof Error ? err.message : String(err)} (run ${runId} used agent "${run.agent}"; for a command-adapter run pass --agent-config <file>)`,
+            );
+          }
           log(`Resuming run ${runId} (${suite.name}) on ${adapter.id}`);
           const result = await resumeBench({
             runId,

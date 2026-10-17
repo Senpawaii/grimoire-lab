@@ -1,11 +1,10 @@
 import { existsSync } from "node:fs";
-import { copyFile, cp, mkdir } from "node:fs/promises";
+import { copyFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { join } from "node:path";
 import type { AgentAdapter, RunResult, Skill, TranscriptEvent, Usage } from "@grimoire/core";
 import { execa } from "execa";
-
-const NOT_PART_OF_SKILL: Record<string, true> = { "grimoire.bench.yaml": true, fixtures: true };
+import { copySkill } from "./skill-files.js";
 
 interface ParsedOutput {
   transcript: TranscriptEvent[];
@@ -120,14 +119,7 @@ export const claudeCode: AgentAdapter = {
   },
 
   async install(skill: Skill, ws) {
-    const dest = join(ws.dir, ".claude", "skills", skill.name);
-    await cp(skill.dir, dest, {
-      recursive: true,
-      filter: (src) => {
-        const rel = relative(skill.dir, src);
-        return !NOT_PART_OF_SKILL[rel.split(sep)[0] ?? ""];
-      },
-    });
+    await copySkill(skill, join(ws.dir, ".claude", "skills", skill.name));
   },
 
   async run(req, ws): Promise<RunResult> {
