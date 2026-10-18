@@ -512,9 +512,8 @@ do not release. Dependabot runtime updates are titled `fix(deps):`, so they rele
    tarballs to the release. If that job fails the release exists without assets: fix and re-run the job.
 
 The release PR is opened with the default `GITHUB_TOKEN`; no personal access token is needed, but Actions must
-be allowed to create pull requests (Settings, Actions, General) and the fork-PR approval policy must be
-`first_time_contributors_new_to_github` (the stricter default holds the bot's CI runs for a manual approval).
-Branch protection requires the `pr-title` check, and squash merging (the only merge method) uses the
+be allowed to create pull requests (Settings, Actions, General). GitHub holds the CI run of a bot-created PR
+for approval, so the release workflow approves it. Branch protection requires the `pr-title` check, and squash merging (the only merge method) uses the
 PR title as the commit message, so every merge is visible to release-please.
 
 Consume a release with
