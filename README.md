@@ -511,9 +511,11 @@ do not release. Dependabot runtime updates are titled `fix(deps):`, so they rele
    lint, build, tests and the consume smoke test, and attaches the `@grimoire/core` and `@grimoire/adapters`
    tarballs to the release. If that job fails the release exists without assets: fix and re-run the job.
 
-The workflow needs a `RELEASE_PLEASE_TOKEN` repository secret (fine-grained PAT or GitHub App token with
-contents and pull-requests write) so the release PR triggers the required CI checks; and Actions must be
-allowed to create pull requests (Settings, Actions, General).
+The release PR is opened with the default `GITHUB_TOKEN`, whose events do not start workflows, so the release
+workflow dispatches `ci.yml` on the release branch itself; those check runs satisfy the required checks. No
+personal access token is needed, but Actions must be allowed to create pull requests (Settings, Actions,
+General). Branch protection requires the `pr-title` check, and squash merging (the only merge method) uses the
+PR title as the commit message, so every merge is visible to release-please.
 
 Consume a release with
 
