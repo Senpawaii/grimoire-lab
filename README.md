@@ -511,10 +511,17 @@ do not release. Dependabot runtime updates are titled `fix(deps):`, so they rele
    lint, build, tests and the consume smoke test, and attaches the `@grimoire/core` and `@grimoire/adapters`
    tarballs to the release. If that job fails the release exists without assets: fix and re-run the job.
 
-The release PR is opened with the default `GITHUB_TOKEN`; no personal access token is needed, but Actions must
-be allowed to create pull requests (Settings, Actions, General). GitHub holds the CI run of a bot-created PR
-for approval, so the release workflow approves it. Branch protection requires the `pr-title` check, and squash merging (the only merge method) uses the
-PR title as the commit message, so every merge is visible to release-please.
+**How the release PR gets CI without a token.** The release PR is opened with the default `GITHUB_TOKEN`, so no
+personal access token or extra secret is needed; Actions only has to be allowed to create pull requests
+(Settings, Actions, General). GitHub holds the CI run of a bot-created PR as `action_required`, and `main`'s
+required checks cannot pass until it runs, so the `release-please` job of `release.yml` approves the run for the
+release branch's current head commit (it waits up to two minutes for that run to exist). If CI on a release PR
+ever sits on "Approve and run", approve it once by hand and check that step.
+
+**Enforcement (repository settings, not files).** `main` requires the `pr-title` check together with the build
+and coverage checks, branches must be up to date, and admins are bound too. Squash merge is the only merge
+method and it uses the PR title as the commit message, so every merge reaches release-please with a
+Conventional Commit subject. A non-conventional title fails `pr-title` and cannot be merged.
 
 Consume a release with
 
