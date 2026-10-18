@@ -14,6 +14,12 @@ All notable changes to `@grimoire/core` (and the CLI built on it). Format follow
 
 ## Unreleased
 
+## 0.3.2 - 2026-10-18
+
+### Changed
+
+- Dependency updates: execa 10.0.1 to 10.1.1, zod 4.6.5 to 4.6.7, `@types/node` 26.6.4 to 26.6.5 (dev).
+
 ## 0.3.1 - 2026-10-18
 
 ### Changed
