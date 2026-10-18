@@ -13,6 +13,15 @@ release-please from Conventional Commit titles; do not edit them by hand.
   semver applies normally.
 - Only the package root export (`@grimoire/core`) is public API.
 
+## [0.3.4](https://github.com/Senpawaii/grimoire-lab/compare/v0.3.3...v0.3.4) (2026-10-18)
+
+
+### Fixed
+
+* **ci:** approve the CI run of the release branch's current head commit ([#41](https://github.com/Senpawaii/grimoire-lab/issues/41)) ([e372a3d](https://github.com/Senpawaii/grimoire-lab/commit/e372a3df68155956d8930967bf513e6b22fa7db2))
+* **ci:** approve the release PR's CI run from the release workflow ([#40](https://github.com/Senpawaii/grimoire-lab/issues/40)) ([66b0ef4](https://github.com/Senpawaii/grimoire-lab/commit/66b0ef4eee67332d81d2f3dc1adcbb8d9c9ce61c))
+* **ci:** drop workflow_dispatch workaround; rely on approval policy for the release PR ([#38](https://github.com/Senpawaii/grimoire-lab/issues/38)) ([76e0021](https://github.com/Senpawaii/grimoire-lab/commit/76e0021930e19c0c8e8832420d987e55d004ad63))
+
 ## [0.3.3](https://github.com/Senpawaii/grimoire-lab/compare/v0.3.2...v0.3.3) (2026-10-18)
 
 

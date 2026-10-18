@@ -1,6 +1,6 @@
 {
   "name": "@grimoire/adapters",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Agent adapters for @grimoire/core: Claude Code, omp, and a generic command adapter.",
   "license": "MIT",
   "repository": {
