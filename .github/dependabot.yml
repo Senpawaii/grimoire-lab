@@ -9,6 +9,11 @@ updates:
       interval: daily
       time: "07:00"
       timezone: Europe/Lisbon
+    # Runtime dependency updates change what consumers get, so they release (release-please: fix).
+    commit-message:
+      prefix: fix
+      prefix-development: chore
+      include: scope
 
   # Actions pinned in .github/workflows.
   - package-ecosystem: github-actions
@@ -17,3 +22,5 @@ updates:
       interval: daily
       time: "07:00"
       timezone: Europe/Lisbon
+    commit-message:
+      prefix: ci

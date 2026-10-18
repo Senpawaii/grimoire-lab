@@ -498,18 +498,22 @@ own policy, and move the candidate into your own store if you accept it. The typ
 
 ## Releasing
 
-Releases are GitHub releases cut from tags; nothing is published to npm. `@grimoire/core` and
-`@grimoire/adapters` are versioned together (both `package.json` versions must equal the tag, checked by
-`scripts/release-notes.mjs`); the CLI stays `0.0.0`.
+Releases are automatic and cut by [release-please](https://github.com/googleapis/release-please); nothing
+is published to npm. PR titles must be Conventional Commits (CI checks this) because the squash-merge title
+is what release-please reads: `feat:` is a minor bump, `fix:`, `perf:` and `deps:` are patch bumps, a `!`
+(breaking) is a minor bump while the version is `0.x`; `docs`, `chore`, `ci`, `test`, `build` and `refactor`
+do not release. Dependabot runtime updates are titled `fix(deps):`, so they release.
 
-1. Bump `version` in `packages/core/package.json` and `packages/adapters/package.json` to the same value
-   and rename `## Unreleased` in `CHANGELOG.md` to
-   `## <version> - <date>` (add a fresh empty `## Unreleased` above it). Merge via a PR.
-2. Tag the merge commit and push the tag: `git tag v<version> && git push origin v<version>`.
-3. `.github/workflows/release.yml` checks the tag equals both package versions and has a changelog
-   section, runs lint, build, tests and the consume smoke test, then creates the GitHub release with
-   that changelog section as notes and the `@grimoire/core` and `@grimoire/adapters` tarballs attached.
-   Tags containing `-` (for example `v0.2.0-rc.1`) are marked pre-release.
+1. Every push to `main` updates one open release PR ("chore(main): release X.Y.Z") that bumps
+   `packages/core` and `packages/adapters` to the same version, `version.txt`, and `CHANGELOG.md`.
+2. Merging that PR tags `vX.Y.Z` and creates the GitHub release.
+3. `.github/workflows/release.yml` then checks the tag against both package versions and the changelog, runs
+   lint, build, tests and the consume smoke test, and attaches the `@grimoire/core` and `@grimoire/adapters`
+   tarballs to the release. If that job fails the release exists without assets: fix and re-run the job.
+
+The workflow needs a `RELEASE_PLEASE_TOKEN` repository secret (fine-grained PAT or GitHub App token with
+contents and pull-requests write) so the release PR triggers the required CI checks; and Actions must be
+allowed to create pull requests (Settings, Actions, General).
 
 Consume a release with
 

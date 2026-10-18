@@ -1,27 +1,51 @@
 name: Release
 
-# Push a tag `vX.Y.Z` (it must equal packages/core/package.json's and packages/adapters/package.json's
-# version and have a matching `## X.Y.Z` section in CHANGELOG.md) to build, verify and publish a GitHub
-# release with the @grimoire/core and @grimoire/adapters tarballs attached. Nothing is published to npm.
+# Every push to main runs release-please. It keeps one release PR open (version bump of
+# packages/core and packages/adapters, CHANGELOG.md, version.txt) built from the Conventional Commit
+# titles merged since the last release. Merging that PR tags vX.Y.Z and creates the GitHub release;
+# the `publish` job then builds, verifies and attaches the @grimoire/core and @grimoire/adapters
+# tarballs. Nothing is published to npm.
+#
+# RELEASE_PLEASE_TOKEN (a fine-grained PAT or GitHub App token with contents + pull-requests write) is
+# required for the release PR to trigger CI, which main's required checks need. Without it the PR is
+# created with the default token and its checks never start.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
-  release:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - id: rp
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
-      - name: Validate tag and extract release notes
-        run: node scripts/release-notes.mjs "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
+      - name: Tag, both package versions and changelog agree
+        run: node scripts/release-notes.mjs "${{ needs.release-please.outputs.tag_name }}" > /dev/null
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm build
@@ -32,13 +56,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/dist"
           pnpm --filter @grimoire/core pack --pack-destination "$RUNNER_TEMP/dist"
           pnpm --filter @grimoire/adapters pack --pack-destination "$RUNNER_TEMP/dist"
-      - name: Create GitHub release
+      - name: Attach tarballs (assets are never replaced)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          prerelease=""
-          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/*.tgz \
-            --title "$GITHUB_REF_NAME" \
-            --notes-file "$RUNNER_TEMP/notes.md" \
-            --verify-tag $prerelease
+        run: gh release upload "${{ needs.release-please.outputs.tag_name }}" "$RUNNER_TEMP"/dist/*.tgz
