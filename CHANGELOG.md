@@ -14,6 +14,8 @@ All notable changes to `@grimoire/core` (and the CLI built on it). Format follow
 
 ## Unreleased
 
+## 0.3.0 - 2026-10-18
+
 ### Added
 
 - Generic `command` adapter (#29): `createCommandAdapter(config)` in `@grimoire/adapters` runs any CLI as
@@ -24,6 +26,33 @@ All notable changes to `@grimoire/core` (and the CLI built on it). Format follow
   `getAdapter(id, { config? })` takes an optional config (existing callers unchanged), plus
   `loadCommandConfig`/`parseCommandConfig`. CLI: `--agent command --agent-config <file.json|yaml>` on
   `bench`, `propose` and `resume`. See the README section "Other agents (command adapter)".
+- `omp` agent adapter (`--agent omp`, `getAdapter("omp")`, exported `omp` and `parseOmpJson` from
+  `@grimoire/adapters`): runs `omp -p --no-session --mode json --approval-mode yolo --no-rules --no-extensions`
+  in the trial workspace, prompt over stdin, skill installed at `.omp/skills/<name>/`. Isolation: baseline
+  arm `--no-skills`, skill arm `--skills <installed>` (verified to hide user-level skills). Transcript from
+  omp's JSON stream (`tool_call`, `tool_result`, `skill_loaded` on a read of `skill://<name>`); usage is the
+  sum of `totalTokens` and `cost.total` over assistant messages. Effort is the `:level` suffix of `--model`,
+  so it lands in the recorded `agent.model`. A run that never reached `agent_end` (unknown model) or whose
+  last model request failed is an infrastructure error; timeout kills the whole process tree.
+- `StageOptions.withSuite` on `stageCandidate`: also copies `grimoire.bench.yaml` and `fixtures/` so a
+  staged candidate can be benchmarked again; the staged digest is unchanged.
+- `onSourceError(error, source)` option (`SourceErrorOptions`) on `resolveSkill`, `resolve`,
+  `loadSkillByDigest`, `load` and `listSkills`: a throwing source is skipped and reported instead of failing
+  the call. Default behavior (rethrow) is unchanged.
+
+### Changed
+
+- Skill digests ignore `.DS_Store`, `Thumbs.db` and `desktop.ini` at any depth. Folders without those files
+  keep their digest; folders that contained them get a new one.
+- `gitSource` caches tagged versions for the life of the instance, so listing after an unrelated commit
+  re-hashes only HEAD (40 tags: 3.1 s cold, 0.18 s after an empty commit, previously 3.0 s).
+
+### Docs
+
+- README: omp agent, which delta is the lift (`gate.delta` vs `deltas.passRate`), the permissive default
+  `minTrials`, multi-source error handling. `scripts/smoke-consume.mjs` now also runs the consumer flow
+  (git tagged history, custom source, digest mismatch, `onSourceError`, `stageCandidate`, `benchProposal`)
+  against the packed tarball.
 
 ## 0.2.0 - 2026-10-18
 

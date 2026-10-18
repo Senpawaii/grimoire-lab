@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { listSkillFiles } from "./digest.js";
@@ -41,6 +41,12 @@ export type SkillRewriter = (
 export interface StageOptions {
   /** Rewrites the frontmatter `version` (added when absent). Must be semver. */
   version?: string;
+  /**
+   * Also copies the current skill's benchmark suite (`grimoire.bench.yaml` and `fixtures/`) so the
+   * staged directory can be benchmarked or promoted as a complete skill folder. They are not part of
+   * the digest, so this never changes the staged digest.
+   */
+  withSuite?: boolean;
 }
 
 const FRONTMATTER = /^(\uFEFF?---\r?\n)([\s\S]*?)(\r?\n---[ \t]*(?:\r?\n|$))/;
@@ -62,7 +68,7 @@ function withVersion(source: string, version: string): string {
  * skill. Files are selected exactly like the digest does, so benchmark inputs (`grimoire.bench.yaml`,
  * `fixtures/`) and `.git` are not copied, and without `version` the staged digest equals
  * `current.digest`. Whoever edits (a human or an agent) edits `destDir` afterwards; core does not
- * generate content. The suite stays with the current skill.
+ * generate content. The suite stays with the current skill unless `withSuite` is set.
  */
 export async function stageCandidate(
   current: Skill,
@@ -78,7 +84,13 @@ export async function stageCandidate(
     await mkdir(dirname(target), { recursive: true });
     await copyFile(join(current.dir, rel), target);
   }
-
+  if (opts.withSuite) {
+    for (const name of ["grimoire.bench.yaml", "fixtures"]) {
+      await cp(join(current.dir, name), join(dest, name), { recursive: true }).catch((err) => {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      });
+    }
+  }
   if (opts.version !== undefined) {
     const file = join(dest, "SKILL.md");
     await writeFile(file, withVersion(await readFile(file, "utf8"), opts.version));

@@ -40,4 +40,14 @@ describe("digestDir", () => {
     await writeFile(join(dir, "fixtures", "a.txt"), "data");
     expect(await digestDir(dir)).toBe(before);
   });
+
+  it("ignores file-manager litter at any depth, but not other dotfiles", async () => {
+    const before = await digestDir(dir);
+    await writeFile(join(dir, ".DS_Store"), "x");
+    await writeFile(join(dir, "Thumbs.db"), "x");
+    await writeFile(join(dir, "scripts", "desktop.ini"), "x");
+    expect(await digestDir(dir)).toBe(before);
+    await writeFile(join(dir, ".gitignore"), "x");
+    expect(await digestDir(dir)).not.toBe(before);
+  });
 });

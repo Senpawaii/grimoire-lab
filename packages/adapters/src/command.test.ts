@@ -322,7 +322,7 @@ describe("getAdapter", () => {
   it("keeps the existing agents and the unknown-agent error", () => {
     expect(getAdapter("claude-code").id).toBe("claude-code");
     expect(() => getAdapter("nope")).toThrow(
-      /Unknown agent "nope". Available: claude-code, command/,
+      /Unknown agent "nope". Available: claude-code, omp, command/,
     );
   });
 });

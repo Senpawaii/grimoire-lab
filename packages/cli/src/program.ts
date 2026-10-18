@@ -88,7 +88,7 @@ export function createProgram(
     .option("--model <model>", "model passed to the agent")
     .option(
       "--agent <id>",
-      "agent adapter (claude-code, or command with --agent-config)",
+      "agent adapter (claude-code, omp, or command with --agent-config)",
       "claude-code",
     )
     .option(
@@ -155,7 +155,7 @@ export function createProgram(
     .option("--model <model>", "model passed to the agent")
     .option(
       "--agent <id>",
-      "agent adapter (claude-code, or command with --agent-config)",
+      "agent adapter (claude-code, omp, or command with --agent-config)",
       "claude-code",
     )
     .option(

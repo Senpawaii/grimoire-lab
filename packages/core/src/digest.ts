@@ -9,12 +9,20 @@ const EXCLUDED_AT_ROOT: Record<string, true> = {
   ".git": true,
 };
 
+/** File-manager litter at any depth; browsing a folder must not make a new version (lowercase). */
+const OS_JUNK_FILES: Record<string, true> = {
+  ".ds_store": true,
+  "thumbs.db": true,
+  "desktop.ini": true,
+};
+
 /** Files that make up a skill (posix paths relative to `root`), excluding benchmark inputs. */
 export async function listSkillFiles(root: string, rel = ""): Promise<string[]> {
   const entries = await readdir(join(root, rel), { withFileTypes: true });
   const out: string[] = [];
   for (const e of entries) {
     if (rel === "" && EXCLUDED_AT_ROOT[e.name]) continue;
+    if (OS_JUNK_FILES[e.name.toLowerCase()]) continue;
     const childRel = rel === "" ? e.name : posix.join(rel, e.name);
     if (e.isDirectory()) out.push(...(await listSkillFiles(root, childRel)));
     else if (e.isFile()) out.push(childRel);
