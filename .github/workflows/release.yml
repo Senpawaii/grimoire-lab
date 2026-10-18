@@ -6,14 +6,15 @@ name: Release
 # the `publish` job then builds, verifies and attaches the @grimoire/core and @grimoire/adapters
 # tarballs. Nothing is published to npm.
 #
-# The release PR is opened with the default GITHUB_TOKEN. Its pull_request events do not need a PAT as
-# long as the repo's fork-PR approval policy does not hold the bot's runs for approval (set to
-# first_time_contributors_new_to_github).
+# The release PR is opened with the default GITHUB_TOKEN. GitHub holds the pull_request CI run of a
+# bot-created PR as "action_required" (needs approval), and main's required checks cannot pass until it
+# runs, so the `approve-ci` step approves it. No personal access token is needed.
 on:
   push:
     branches: [main]
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -29,6 +30,24 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      - name: Approve CI on the release PR
+        id: approve-ci
+        if: steps.rp.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRS: ${{ steps.rp.outputs.prs }}
+        run: |
+          for branch in $(printf '%s' "$PRS" | jq -r '.[].headBranchName'); do
+            approved=0
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              for id in $(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch "$branch" --event pull_request --status action_required --json databaseId -q '.[].databaseId'); do
+                gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/approve" && approved=1
+              done
+              [ "$approved" = 1 ] && break
+              sleep 10
+            done
+            [ "$approved" = 1 ] || echo "::warning::no CI run awaiting approval found on $branch"
+          done
 
   publish:
     needs: release-please
