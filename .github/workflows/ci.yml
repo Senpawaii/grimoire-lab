@@ -4,10 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Dispatched by the release workflow on the release-please branch: events caused by GITHUB_TOKEN
-  # (such as the release PR opening) do not start workflows, but workflow_dispatch does, and its
-  # check runs on the branch head satisfy main's required checks. No personal access token needed.
-  workflow_dispatch:
 
 jobs:
   pr-title:
@@ -44,6 +40,7 @@ jobs:
       - run: node scripts/smoke-consume.mjs
 
   coverage:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -56,4 +53,4 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Coverage of changed files must be at least 90%
-        run: node scripts/coverage-changed.mjs origin/${{ github.base_ref || 'main' }}
+        run: node scripts/coverage-changed.mjs origin/${{ github.base_ref }}
