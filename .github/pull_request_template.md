@@ -1,3 +1,7 @@
+<!-- The PR title becomes the squash-merge commit and drives the release:
+     feat: = minor, fix:/perf:/deps: = patch, `!` or BREAKING CHANGE = minor while 0.x.
+     chore/docs/ci/test/build/refactor do not release. -->
+
 ## What and why
 
 <!-- What does this change, and why? Link the issue if there is one. -->

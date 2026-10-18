@@ -6,6 +6,19 @@ on:
   pull_request:
 
 jobs:
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: PR title is a Conventional Commit (release-please reads the squash-merge title)
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! printf '%s' "$TITLE" | grep -Eq '^(feat|fix|perf|deps|revert|docs|chore|ci|test|build|refactor|style)(\([a-z0-9_-]+\))?!?: .+'; then
+            echo "::error::PR title must look like 'fix(scope): summary' or 'feat: summary' (got: $TITLE)"
+            exit 1
+          fi
+
   check:
     strategy:
       fail-fast: false

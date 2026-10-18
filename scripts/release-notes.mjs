@@ -33,7 +33,7 @@ if (adaptersPkg.version !== version) {
 }
 
 const lines = readFileSync(join(root, "CHANGELOG.md"), "utf8").split(/\r?\n/);
-const heading = new RegExp(`^## \\[?${version.replace(/[.+]/g, "\\$&")}\\]?(\\s|$)`);
+const heading = new RegExp(`^## \\[?${version.replace(/[.+]/g, "\\$&")}\\]?(\\s|\\(|$)`);
 const start = lines.findIndex((l) => heading.test(l));
 if (start === -1)
   fail(`CHANGELOG.md has no "## ${version}" section (rename "Unreleased" before tagging)`);
