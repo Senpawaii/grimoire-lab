@@ -1,4 +1,4 @@
-// Packs @grimoire/core, installs the tarball into a fresh temp project, then checks that
+// Packs @grimoire/core and @grimoire/adapters, installs both tarballs into a fresh temp project, then checks that
 // (a) every export in EXPORTS resolves at runtime and (b) a typed consumer file compiles.
 // Run after `pnpm build`:  node scripts/smoke-consume.mjs
 import { execFileSync } from "node:child_process";
@@ -139,6 +139,7 @@ console.log("flow ok");
 
 const root = resolve(fileURLToPath(import.meta.url), "..", "..");
 const coreDir = join(root, "packages", "core");
+const adaptersDir = join(root, "packages", "adapters");
 const isWin = process.platform === "win32";
 
 function run(cmd, args, cwd) {
@@ -151,9 +152,11 @@ function run(cmd, args, cwd) {
   });
 }
 
-if (!existsSync(join(coreDir, "dist", "index.js"))) {
-  console.error("packages/core/dist is missing; run `pnpm build` first.");
-  process.exit(1);
+for (const dir of [coreDir, adaptersDir]) {
+  if (!existsSync(join(dir, "dist", "index.js"))) {
+    console.error(`${dir}/dist is missing; run \`pnpm build\` first.`);
+    process.exit(1);
+  }
 }
 
 const tmp = mkdtempSync(join(tmpdir(), "grimoire-smoke-"));
@@ -162,9 +165,14 @@ try {
   const packDir = join(tmp, "pack");
   mkdirSync(packDir);
   run("pnpm", ["pack", "--pack-destination", packDir], coreDir);
-  const tgz = readdirSync(packDir).find((f) => f.endsWith(".tgz"));
-  if (!tgz) throw new Error("pnpm pack produced no tarball");
-  const tarball = join(packDir, tgz);
+  run("pnpm", ["pack", "--pack-destination", packDir], adaptersDir);
+  const packed = (prefix) => {
+    const f = readdirSync(packDir).find((n) => n.startsWith(prefix) && n.endsWith(".tgz"));
+    if (!f) throw new Error(`pnpm pack produced no ${prefix}*.tgz`);
+    return join(packDir, f);
+  };
+  const tarball = packed("grimoire-core-");
+  const adaptersTarball = packed("grimoire-adapters-");
 
   const rootPkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const tsRange = rootPkg.devDependencies.typescript;
@@ -176,8 +184,9 @@ try {
     join(app, "package.json"),
     JSON.stringify({ name: "smoke-consumer", private: true, type: "module" }, null, 2),
   );
-  // A fresh project: the tarball's own dependencies (execa, yaml, zod) must resolve from the registry.
-  run("pnpm", ["add", "--prefer-offline", tarball], app);
+  // A fresh project: the tarballs' own dependencies (execa, yaml, zod) must resolve from the registry.
+  // @grimoire/core is a peer of the adapters, so the one tarball installed here is the only copy.
+  run("pnpm", ["add", "--prefer-offline", tarball, adaptersTarball], app);
   run(
     "pnpm",
     ["add", "-D", "--prefer-offline", `typescript@${tsRange}`, `@types/node@${nodeTypesRange}`],
@@ -254,6 +263,28 @@ console.log("runtime ok: " + specs.length + " exports");
   // digest mismatch and per-source error isolation.
   writeFileSync(join(app, "flow.mjs"), FLOW_SCRIPT);
   process.stdout.write(run("node", ["flow.mjs"], app));
+
+  // (d) @grimoire/adapters installed next to core from tarballs: it imports, and it resolves the
+  // very same @grimoire/core the consumer installed (a second copy would break instanceof checks).
+  writeFileSync(
+    join(app, "adapters.mjs"),
+    `import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { join } from "node:path";
+import { getAdapter } from "@grimoire/adapters";
+import { SkillNotFound } from "@grimoire/core";
+assert.equal(typeof getAdapter, "function");
+assert.equal(getAdapter("omp").id, "omp");
+const here = createRequire(join(process.cwd(), "package.json"));
+const adaptersPkg = realpathSync(here.resolve("@grimoire/adapters/package.json"));
+const fromAdapters = realpathSync(createRequire(adaptersPkg).resolve("@grimoire/core"));
+assert.equal(fromAdapters, realpathSync(here.resolve("@grimoire/core")), "adapters resolved a second @grimoire/core");
+assert.equal(typeof SkillNotFound, "function");
+console.log("adapters ok: single @grimoire/core");
+`,
+  );
+  process.stdout.write(run("node", ["adapters.mjs"], app));
   console.log("smoke-consume: PASS");
 } catch (err) {
   failed = true;

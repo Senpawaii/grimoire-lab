@@ -184,9 +184,6 @@ importers:
 
   packages/adapters:
     dependencies:
-      '@grimoire/core':
-        specifier: workspace:*
-        version: link:../core
       execa:
         specifier: ^10.0.1
         version: 10.0.1
@@ -196,6 +193,10 @@ importers:
       zod:
         specifier: ^4.6.5
         version: 4.6.5
+    devDependencies:
+      '@grimoire/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/cli:
     dependencies:
