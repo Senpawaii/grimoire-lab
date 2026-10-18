@@ -5,14 +5,15 @@ Benchmark agent skills. Does a skill actually beat the same agent without it?
 `grimoire bench` runs a skill's task suite twice, with the skill installed and without, in throwaway
 workspaces, then compares pass rate, tokens, cost and time.
 
-> Status: early. Claude Code, plus any other CLI through the generic command adapter. Comparisons: skill vs. no-skill baseline, and skill
+> Status: early. Claude Code and omp, plus any other CLI through the generic command adapter. Comparisons: skill vs. no-skill baseline, and skill
 > version vs. skill version.
 > Planned: agent-vs-agent, an LLM judge, more adapters.
 
 ## Requirements
 
 - Node 22.13+ and pnpm
-- [Claude Code](https://claude.com/claude-code) CLI on `PATH`, logged in (or `ANTHROPIC_API_KEY` set)
+- [Claude Code](https://claude.com/claude-code) CLI on `PATH`, logged in (or `ANTHROPIC_API_KEY` set), or
+  [omp](#omp-agent) with `--agent omp`
 
 ## Usage
 
@@ -202,6 +203,21 @@ Limits:
   value can add infrastructure errors and timeouts that a sequential run would not see.
 - Benchmarks consume your Claude plan's usage limits.
 
+## omp agent
+
+`--agent omp` runs `omp` headless (`omp -p --no-session --mode json`) in
+the trial workspace and needs `omp` on `PATH` with a model configured. The skill is installed at
+`.omp/skills/<name>/`. Isolation is part of the measurement: the baseline arm runs with `--no-skills`, the skill
+arm with `--skills <name>`, so your own skills cannot leak into either arm, and every run uses `--no-rules
+--no-extensions --approval-mode yolo` (do not benchmark skills you do not trust). The transcript comes from omp's
+JSON stream: tool calls, results, and `skill_loaded` when the agent reads `skill://<name>`, so the
+`skill_loaded` assertion works. Tokens and cost are summed over the run's assistant messages.
+
+Pick model and thinking effort in one selector: `--model anthropic/claude-sonnet-5-5:high`. The selector is
+recorded as the arm's `agent.model`, so runs that differ only in effort stay distinguishable. A run where omp
+never started the agent (unknown model, bad flag) or the model request failed (rate limit, auth) is an
+infrastructure error, not a skill failure. On timeout the whole process tree is killed.
+
 ## Other agents (command adapter)
 
 The `command` adapter runs any CLI as the agent, so you can benchmark agents other than Claude Code.
@@ -372,6 +388,17 @@ nothing missing is returned as is without calling the adapter, so resuming is id
 trials are never re-run, infrastructure errors included; runs recorded before suite digests were
 stored (internal schema v3 and older) cannot be resumed.
 
+### Sources across several stores
+
+`resolveSkill`, `resolve`, `loadSkillByDigest`, `load` and `listSkills` take an optional last argument
+`{ onSourceError }`. By default the first source that throws from `list`/`load` makes the call reject. With
+`onSourceError(error, source)` that source is skipped, the callback reports it, and the other sources still
+answer; a skipped source can hide matches (for example one half of an `AmbiguousSkill`), so surface what the
+callback receives. `gitSource` keeps tagged versions cached for the life of the instance (tags are immutable),
+so after a commit only HEAD is re-hashed. File-manager litter (`.DS_Store`, `Thumbs.db`, `desktop.ini`, at any
+depth) is not part of a skill's digest; a UTF-8 BOM still is, because the digest is byte identity apart from
+CRLF normalization of text files.
+
 Everything public is exported from `packages/core/src/index.ts`; `exports` blocks deep imports, so
 nothing under `dist/*` is API. Core never imports `@grimoire/adapters`: you pass an `AgentAdapter`
 instance. See [docs/design/library-api.md](docs/design/library-api.md) for the full API.
@@ -438,9 +465,22 @@ Pass `requireCiExcludesZero: true` to additionally require `ci.lower > 0` or `ci
 `comparison.gate`; default false). Results written before `ci` existed still parse, without it. The
 human-readable report and CLI output do not show the interval.
 
+**Which delta is the lift?** `comparison.gate.delta` is the pass-rate delta the verdict was judged on: it
+follows `excludeInfraErrors`, so with the default it leaves infrastructure errors out. Use it as the lift
+over no skill (`skill-vs-baseline`) or over the previous version. `comparison.deltas.passRate` is always the
+plain pass rate over all trials, errors counted as failures; use it as a fallback when `gate.delta` is absent
+(a side had no countable trials), and treat the two as different numbers when infra errors occurred.
+
+The default `minTrials` of 5 is permissive for LLM agents. Set your own (and `tolerance`) on every comparison
+used for a decision.
+
 ### Proposing a version
 
-`stageCandidate(skill, dir, { version? })` copies a skill (without its suite) into `dir`.
+`stageCandidate(skill, dir, { version?, withSuite? })` copies a skill into `dir`. The suite
+(`grimoire.bench.yaml`, `fixtures/`) is not part of the digest and is left behind unless `withSuite: true`,
+which copies it too so the staged folder can be benchmarked again as a complete skill; the staged digest is the
+same either way.
+
 `proposeVersion(skill, basis, { rewriter })` stages a copy, runs your rewriter on it (for example an
 LLM-driven agent that reads the `BenchResult`), and returns `{ dir, digest, changelog, skill }`. Core
 generates no content: without a rewriter it throws `RewriterNotAvailable`, and if the rewriter changes

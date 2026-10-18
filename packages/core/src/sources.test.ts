@@ -164,6 +164,46 @@ describe("resolveSkill / loadSkillByDigest", () => {
   });
 });
 
+describe("onSourceError", () => {
+  const boom = new Error("remote down");
+  const failing: SkillSource = {
+    id: "failing",
+    list: () => Promise.reject(boom),
+    load: () => Promise.reject(boom),
+  };
+
+  it("without the option the first source error is rethrown", async () => {
+    const good = dirSource(join(tmp, "good"));
+    await writeSkill(join(tmp, "good"), "alpha", "1.0.0", "a");
+    await expect(resolveSkill("alpha", [failing, good])).rejects.toBe(boom);
+    await expect(listSkills([failing, good])).rejects.toBe(boom);
+    await expect(loadSkillByDigest("sha256:x", [failing, good])).rejects.toBe(boom);
+  });
+
+  it("with the option a failing source is skipped, reported, and the others still answer", async () => {
+    const dir = await writeSkill(join(tmp, "good"), "alpha", "1.0.0", "a");
+    const good = dirSource(join(tmp, "good"), { id: "good" });
+    const digest = await digestDir(dir);
+    const seen: [unknown, string][] = [];
+    const opts = { onSourceError: (e: unknown, s: SkillSource) => seen.push([e, s.id]) };
+
+    expect((await resolveSkill("alpha", [failing, good], opts)).digest).toBe(digest);
+    expect((await listSkills([failing, good], opts)).map((r) => r.name)).toEqual(["alpha"]);
+    const loaded = await loadSkillByDigest(digest, [failing, good], opts);
+    expect(loaded.skill.name).toBe("alpha");
+    await loaded.dispose();
+    expect((await resolve("alpha", [failing, good], opts)) === digest).toBe(true);
+    expect(seen.length).toBe(4);
+    expect(seen.every(([e, id]) => e === boom && id === "failing")).toBe(true);
+  });
+
+  it("still throws SkillNotFound when every source fails", async () => {
+    await expect(
+      resolveSkill("alpha", [failing], { onSourceError: () => {} }),
+    ).rejects.toBeInstanceOf(SkillNotFound);
+  });
+});
+
 describe("listSkills / load", () => {
   it("lists across sources with the source id", async () => {
     await writeSkill(join(tmp, "one"), "alpha", "1.0.0", "a");
@@ -288,6 +328,16 @@ describe("gitSource", () => {
     const loaded = await load({ name: "demo", digest: old.digest }, [src]);
     expect(loaded.skill.version).toBe("1.0.0");
     await loaded.dispose();
+  });
+
+  it("an unrelated commit keeps tagged versions listed with unchanged digests", async () => {
+    const src = gitSource({ repo, path: "skills" });
+    const tagged = (await src.list()).find((l) => l.version === "1.0.0");
+    await writeSkill(join(repo, "skills"), "other", undefined, "changed");
+    await commit("unrelated");
+    const after = await src.list();
+    expect(after.find((l) => l.version === "1.0.0")?.digest).toBe(tagged?.digest);
+    expect(after.filter((l) => l.name === "demo")).toHaveLength(2);
   });
 
   it("mixes with a dirSource: same name, different content is ambiguous", async () => {

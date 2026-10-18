@@ -174,7 +174,8 @@ interface GitEntry {
  * (current) and one entry per `name@semver` tag whose tree holds `<path>/<name>`, deduplicated
  * by digest. Tagged skills are read from the folder named like the tag's skill, so keep folder
  * name and skill name equal. `load` exports the tree to a temp dir; `dispose` removes it.
- * The index is cached until HEAD or the tag set changes.
+ * The index is cached until HEAD or the tag set changes; a tag's entry (commit, name -> digest) is
+ * kept for the life of the source, since tags are immutable, so only HEAD is re-hashed after a commit.
  */
 export function gitSource(o: { repo: string; path?: string; id?: string }): SkillSource {
   const repo = resolvePath(o.repo);
@@ -182,6 +183,8 @@ export function gitSource(o: { repo: string; path?: string; id?: string }): Skil
   const id = o.id ?? repo;
   const sub = (name: string) => (base ? `${base}/${name}` : name);
   let cached: { key: string; entries: GitEntry[] } | undefined;
+  // `commit\0name` -> entry, or null when the tagged tree holds no valid skill.
+  const tagged = new Map<string, GitEntry | null>();
 
   const git = (args: string[]) => execa("git", args, { cwd: repo, reject: false });
 
@@ -229,16 +232,27 @@ export function gitSource(o: { repo: string; path?: string; id?: string }): Skil
       }
     };
     const addFrom = async (commit: string, name: string, version?: string, current?: boolean) => {
+      const tagKey = `${commit}\0${name}`;
+      if (!current) {
+        const hit = tagged.get(tagKey);
+        if (hit !== undefined) {
+          if (hit) add({ ...hit, listing: { ...hit.listing, version } });
+          return;
+        }
+      }
       const entry: GitEntry = {
         commit,
         subdir: sub(name),
         listing: { name, description: "", digest: "", source: id },
       };
       const loaded = await tryMaterialize(entry);
-      if (!loaded) return;
+      if (!loaded) {
+        if (!current) tagged.set(tagKey, null);
+        return;
+      }
       try {
         const { skill } = loaded;
-        add({
+        const found: GitEntry = {
           commit,
           subdir: entry.subdir,
           listing: {
@@ -249,7 +263,9 @@ export function gitSource(o: { repo: string; path?: string; id?: string }): Skil
             source: id,
             current,
           },
-        });
+        };
+        if (!current) tagged.set(tagKey, found);
+        add(found);
       } finally {
         await loaded.dispose();
       }
@@ -287,6 +303,31 @@ export function gitSource(o: { repo: string; path?: string; id?: string }): Skil
   };
 }
 
+/** Options shared by the functions that look across several sources. */
+export interface SourceErrorOptions {
+  /**
+   * Called when a source's `list` or `load` throws; that source is then skipped and the others are
+   * still consulted. Without it the first source error is rethrown. A skipped source can hide
+   * matches (for example one half of an `AmbiguousSkill`), so report what the callback receives.
+   */
+  onSourceError?: (error: unknown, source: SkillSource) => void;
+}
+
+/** Runs `fn` against `source`; a throw goes to `onSourceError` and yields `undefined`, or is rethrown. */
+async function fromSource<T>(
+  source: SkillSource,
+  opts: SourceErrorOptions,
+  fn: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!opts.onSourceError) throw err;
+    opts.onSourceError(err, source);
+    return undefined;
+  }
+}
+
 const DIGEST_PREFIX = "sha256:";
 
 function describeRef(l: SkillListing): SkillRef {
@@ -300,7 +341,11 @@ function describeRef(l: SkillListing): SkillRef {
  * is not ambiguous (the first source in order is reported); different digests are, and throw
  * `AmbiguousSkill` rather than picking the first match.
  */
-export async function resolveSkill(ref: string, sources: SkillSource[]): Promise<SkillRef> {
+export async function resolveSkill(
+  ref: string,
+  sources: SkillSource[],
+  opts: SourceErrorOptions = {},
+): Promise<SkillRef> {
   let name: string | undefined;
   let version: string | undefined;
   let digest: string | undefined;
@@ -321,7 +366,7 @@ export async function resolveSkill(ref: string, sources: SkillSource[]): Promise
 
   const matches: SkillListing[] = [];
   for (const source of sources) {
-    for (const l of await source.list()) {
+    for (const l of (await fromSource(source, opts, () => source.list())) ?? []) {
       if (name !== undefined && l.name !== name) continue;
       if (digest !== undefined && l.digest !== digest) continue;
       if (version !== undefined && l.version !== version) continue;
@@ -349,9 +394,10 @@ export async function resolveSkill(ref: string, sources: SkillSource[]): Promise
 export async function loadSkillByDigest(
   digest: string,
   sources: SkillSource[],
+  opts: SourceErrorOptions = {},
 ): Promise<LoadedSkill> {
   for (const source of sources) {
-    const loaded = await source.load(digest);
+    const loaded = await fromSource(source, opts, () => source.load(digest));
     if (!loaded) continue;
     let actual: string;
     try {
@@ -372,12 +418,13 @@ export async function loadSkillByDigest(
 /** The catalog over all sources, as plain JSON-serializable rows (`source` is the source id). */
 export async function listSkills(
   sources: SkillSource[],
+  opts: SourceErrorOptions = {},
 ): Promise<
   { name: string; description: string; digest: string; version?: string; source: string }[]
 > {
   const out = [];
   for (const source of sources) {
-    for (const l of await source.list()) {
+    for (const l of (await fromSource(source, opts, () => source.list())) ?? []) {
       out.push({
         name: l.name,
         description: l.description,
@@ -391,8 +438,12 @@ export async function listSkills(
 }
 
 /** The current digest of `name` (see `resolveSkill` for ambiguity rules). */
-export async function resolve(name: string, sources: SkillSource[]): Promise<string> {
-  return (await resolveSkill(name, sources)).digest;
+export async function resolve(
+  name: string,
+  sources: SkillSource[],
+  opts: SourceErrorOptions = {},
+): Promise<string> {
+  return (await resolveSkill(name, sources, opts)).digest;
 }
 
 /**
@@ -402,14 +453,15 @@ export async function resolve(name: string, sources: SkillSource[]): Promise<str
 export async function load(
   ref: { name: string; digest: string },
   sources: SkillSource[],
+  opts: SourceErrorOptions = {},
 ): Promise<LoadedSkill> {
   let loaded: LoadedSkill;
   try {
-    loaded = await loadSkillByDigest(ref.digest, sources);
+    loaded = await loadSkillByDigest(ref.digest, sources, opts);
   } catch (err) {
     if (!(err instanceof SkillNotFound)) throw err;
     // The digest is gone; if the name still exists, report what it holds now.
-    const current = await resolveSkill(ref.name, sources);
+    const current = await resolveSkill(ref.name, sources, opts);
     throw new DigestMismatch(ref.digest, current.digest, ref.name);
   }
   if (loaded.skill.name !== ref.name) {

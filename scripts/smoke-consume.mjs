@@ -39,7 +39,103 @@ const EXPORTS = [
   { name: "resumeBench", kind: "function" },
   { name: "ResumeMismatch", kind: "value" },
   { name: "formatReport", kind: "function" },
+  { name: "dirSource", kind: "function" },
+  { name: "gitSource", kind: "function" },
+  { name: "resolveSkill", kind: "function" },
+  { name: "loadSkillByDigest", kind: "function" },
+  { name: "listSkills", kind: "function" },
+  { name: "parseSuite", kind: "function" },
+  { name: "DigestMismatch", kind: "value" },
 ];
+
+// Runs inside the fresh consumer project, importing only the public package root.
+const FLOW_SCRIPT = `
+import { execFileSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  DigestMismatch, benchProposal, benchSkill, dirSource, evidenceFor, gitSource, listSkills,
+  loadSkill, loadSkillByDigest, parseSuite, resolveSkill, stageCandidate,
+} from "@grimoire/core";
+
+const tmp = mkdtempSync(join(tmpdir(), "grimoire-flow-"));
+const skillMd = (v, body) => "---\\nname: demo\\ndescription: d\\nversion: " + v + "\\n---\\n" + body + "\\n";
+const writeSkill = (root, v, body) => {
+  mkdirSync(join(root, "demo"), { recursive: true });
+  writeFileSync(join(root, "demo", "SKILL.md"), skillMd(v, body));
+  writeFileSync(join(root, "demo", "grimoire.bench.yaml"), "suite: s\\n");
+};
+
+// A git source with a tagged historical version and a newer HEAD.
+const repo = join(tmp, "repo");
+mkdirSync(repo);
+const git = (...a) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd: repo, stdio: "ignore" });
+git("init", "-q");
+writeSkill(join(repo, "skills"), "1.0.0", "first");
+git("add", "-A"); git("commit", "-q", "-m", "v1"); git("tag", "demo@1.0.0");
+writeSkill(join(repo, "skills"), "1.1.0", "second");
+git("add", "-A"); git("commit", "-q", "-m", "v1.1");
+const gsrc = gitSource({ repo, path: "skills", id: "git" });
+
+const head = await resolveSkill("demo", [gsrc]);
+const old = await resolveSkill("demo@1.0.0", [gsrc]);
+assert.equal(head.version, "1.1.0");
+assert.equal(old.version, "1.0.0");
+assert.notEqual(head.digest, old.digest);
+
+// A custom source implementing the two-method interface, and one that returns the wrong content.
+const store = join(tmp, "store");
+writeSkill(store, "9.9.9", "custom");
+const custom = { id: "custom", list: () => dirSource(store).list(), load: (d) => dirSource(store).load(d) };
+const customRef = await resolveSkill("demo", [custom]);
+writeSkill(join(tmp, "elsewhere"), "0.0.1", "other");
+const wrong = {
+  id: "wrong",
+  list: async () => [{ ...customRef, description: "d", source: "wrong" }],
+  load: async () => ({ skill: await loadSkill(join(tmp, "elsewhere", "demo")), dispose: async () => {} }),
+};
+await assert.rejects(loadSkillByDigest(customRef.digest, [wrong]), DigestMismatch);
+
+// One failing source must not take the catalog down when the consumer opts in.
+const failures = [];
+const failing = { id: "failing", list: () => Promise.reject(new Error("down")), load: () => Promise.reject(new Error("down")) };
+assert.equal((await resolveSkill("demo@1.0.0", [failing, gsrc], { onSourceError: (e) => failures.push(e) })).digest, old.digest);
+assert.equal((await listSkills([failing, gsrc], { onSourceError: () => {} })).length, 2);
+assert.equal(failures.length, 1);
+await assert.rejects(resolveSkill("demo@1.0.0", [failing, gsrc]), /down/);
+
+// Bench the historical version with a stub agent that obeys the skill only if it is installed.
+const suite = parseSuite("suite: s\\ndefaults: { repeat: 2 }\\ntasks:\\n  - id: t\\n    prompt: go\\n    assertions: [{ type: file_exists, path: out.txt }]\\n", tmp);
+const installed = new Map();
+const adapter = {
+  id: "stub",
+  detect: async () => ({ available: true, version: "1" }),
+  install: async (s, ws) => { installed.set(ws.root, s.name + ":" + s.version); },
+  run: async (_req, ws) => {
+    const v = installed.get(ws.root);
+    if (v === "demo:1.1.0") writeFileSync(join(ws.dir, "out.txt"), "x");
+    return { status: "completed", transcript: [], finalMessage: "", durationMs: 1, rawOutput: "", usage: { tokens: 5 } };
+  },
+};
+const loadedNew = await loadSkillByDigest(head.digest, [gsrc]);
+const result = await benchSkill({ skill: loadedNew.skill, suite, adapter, outDir: join(tmp, "out") });
+const evidence = evidenceFor(result, loadedNew.skill);
+assert.equal(evidence.skill.digest, head.digest);
+assert.equal(evidence.vsBaseline.gate.delta > 0, true);
+
+// Stage a candidate with its suite, then bench it against the current version.
+const staged = await stageCandidate(loadedNew.skill, join(tmp, "staged"), { version: "1.2.0", withSuite: true });
+writeFileSync(join(staged.dir, "SKILL.md"), skillMd("1.2.0", "second"));
+const candidate = await loadSkill(staged.dir);
+const loadedOld = await loadSkillByDigest(old.digest, [gsrc]);
+const proposal = await benchProposal({ current: loadedOld.skill, candidate, suite, adapter, outDir: join(tmp, "out2") });
+assert.equal(proposal.comparison.kind, "version-vs-version");
+await loadedNew.dispose();
+await loadedOld.dispose();
+console.log("flow ok");
+`;
 
 const root = resolve(fileURLToPath(import.meta.url), "..", "..");
 const coreDir = join(root, "packages", "core");
@@ -151,6 +247,13 @@ console.log("runtime ok: " + specs.length + " exports");
   );
   run("pnpm", ["exec", "tsc", "-p", "tsconfig.json"], app);
   console.log("type-check ok");
+
+  // (c) the consumer flow through the packed tarball, with a stub agent (no network, no LLM):
+  // dirSource/gitSource (tagged history)/custom SkillSource -> resolveSkill -> loadSkillByDigest
+  // -> benchSkill -> evidenceFor -> stageCandidate({withSuite}) -> benchProposal, plus a refused
+  // digest mismatch and per-source error isolation.
+  writeFileSync(join(app, "flow.mjs"), FLOW_SCRIPT);
+  process.stdout.write(run("node", ["flow.mjs"], app));
   console.log("smoke-consume: PASS");
 } catch (err) {
   failed = true;

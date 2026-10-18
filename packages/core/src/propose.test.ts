@@ -51,6 +51,23 @@ describe("stageCandidate", () => {
     expect(existsSync(join(tmp, "out", "fixtures"))).toBe(false);
   });
 
+  it("withSuite also copies the suite and fixtures without changing the digest", async () => {
+    const current = await makeSkill();
+    const staged = await stageCandidate(current, join(tmp, "out"), { withSuite: true });
+    expect(staged.digest).toBe(current.digest);
+    expect(await readFile(join(tmp, "out", "grimoire.bench.yaml"), "utf8")).toBe("suite: s");
+    expect(await readFile(join(tmp, "out", "fixtures", "a.txt"), "utf8")).toBe("fx");
+  });
+
+  it("withSuite tolerates a skill that has no suite", async () => {
+    const current = await makeSkill();
+    await rm(join(current.dir, "grimoire.bench.yaml"));
+    await rm(join(current.dir, "fixtures"), { recursive: true });
+    const staged = await stageCandidate(current, join(tmp, "out"), { withSuite: true });
+    expect(existsSync(join(staged.dir, "grimoire.bench.yaml"))).toBe(false);
+    expect(existsSync(join(staged.dir, "fixtures"))).toBe(false);
+  });
+
   it("rewrites an existing frontmatter version, leaving everything else byte-for-byte", async () => {
     const current = await makeSkill();
     const staged = await stageCandidate(current, join(tmp, "out"), { version: "1.1.0" });

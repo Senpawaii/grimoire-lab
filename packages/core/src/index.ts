@@ -78,6 +78,7 @@ export {
   SkillNotFound,
   type SkillRef,
   type SkillSource,
+  type SourceErrorOptions,
 } from "./sources.js";
 export {
   ResultStore,
