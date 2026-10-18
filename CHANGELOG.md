@@ -13,6 +13,13 @@ release-please from Conventional Commit titles; do not edit them by hand.
   semver applies normally.
 - Only the package root export (`@grimoire/core`) is public API.
 
+## [0.3.5](https://github.com/Senpawaii/grimoire-lab/compare/v0.3.4...v0.3.5) (2026-10-18)
+
+
+### Docs
+
+* describe how the release PR gets CI and what enforces PR titles ([#42](https://github.com/Senpawaii/grimoire-lab/issues/42)) ([a513126](https://github.com/Senpawaii/grimoire-lab/commit/a51312615cab03fc8fbfad5f776badf2caafad21))
+
 ## [0.3.4](https://github.com/Senpawaii/grimoire-lab/compare/v0.3.3...v0.3.4) (2026-10-18)
 
 
