@@ -37,16 +37,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PRS: ${{ steps.rp.outputs.prs }}
         run: |
+          # The run for the branch's *current* head only exists a few seconds after the push, and an
+          # older head's run may still be waiting: match on the head commit, not just the branch.
           for branch in $(printf '%s' "$PRS" | jq -r '.[].headBranchName'); do
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" -q .object.sha)
             approved=0
-            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-              for id in $(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch "$branch" --event pull_request --status action_required --json databaseId -q '.[].databaseId'); do
+            for attempt in $(seq 1 24); do
+              for id in $(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$sha" --event pull_request --status action_required --json databaseId -q '.[].databaseId'); do
                 gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/approve" && approved=1
               done
               [ "$approved" = 1 ] && break
-              sleep 10
+              sleep 5
             done
-            [ "$approved" = 1 ] || echo "::warning::no CI run awaiting approval found on $branch"
+            [ "$approved" = 1 ] || echo "::warning::no CI run awaiting approval for $sha on $branch"
           done
 
   publish:
