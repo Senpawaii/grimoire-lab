@@ -298,8 +298,8 @@ Design decisions:
 
 ## Using as a library
 
-`@grimoire/core` is an ESM package with bundled types (Node 22.13+). It is not published to npm yet;
-install it from a clone or from git:
+`@grimoire/core` is an ESM package with bundled types (Node 22.13+). It is not published to npm;
+install the release tarballs, or build from a clone:
 
 ```sh
 # from a local clone: build, then pack and install the tarball (what CI's smoke test does)
@@ -310,7 +310,8 @@ pnpm add /tmp/grimoire-core-<version>.tgz
 pnpm add file:../grimoire-lab/packages/core
 ```
 
-Once published, `pnpm add @grimoire/core` is the same import. The stable entry point is the package
+Install from a GitHub release (see [Releasing](#releasing); never from npm, where the `@grimoire/core` name is
+not this project); `@grimoire/adapters` comes from the same release. The stable entry point is the package
 root only. Pin a skill from your local grimoire, benchmark it, and read the evidence:
 
 ```ts
@@ -497,18 +498,31 @@ own policy, and move the candidate into your own store if you accept it. The typ
 
 ## Releasing
 
-Releases are GitHub releases cut from tags; nothing is published to npm. Only `@grimoire/core` is
-versioned (its `package.json` version is the repo version; the CLI and adapters stay `0.0.0`).
+Releases are GitHub releases cut from tags; nothing is published to npm. `@grimoire/core` and
+`@grimoire/adapters` are versioned together (both `package.json` versions must equal the tag, checked by
+`scripts/release-notes.mjs`); the CLI stays `0.0.0`.
 
-1. Bump `version` in `packages/core/package.json` and rename `## Unreleased` in `CHANGELOG.md` to
+1. Bump `version` in `packages/core/package.json` and `packages/adapters/package.json` to the same value
+   and rename `## Unreleased` in `CHANGELOG.md` to
    `## <version> - <date>` (add a fresh empty `## Unreleased` above it). Merge via a PR.
 2. Tag the merge commit and push the tag: `git tag v<version> && git push origin v<version>`.
-3. `.github/workflows/release.yml` checks the tag equals the package version and has a changelog
+3. `.github/workflows/release.yml` checks the tag equals both package versions and has a changelog
    section, runs lint, build, tests and the consume smoke test, then creates the GitHub release with
-   that changelog section as notes and the `@grimoire/core` tarball attached. Tags containing `-`
-   (for example `v0.2.0-rc.1`) are marked pre-release.
+   that changelog section as notes and the `@grimoire/core` and `@grimoire/adapters` tarballs attached.
+   Tags containing `-` (for example `v0.2.0-rc.1`) are marked pre-release.
 
-Consume a release with `pnpm add https://github.com/Senpawaii/grimoire-lab/releases/download/v<version>/grimoire-core-<version>.tgz`.
+Consume a release with
+
+```sh
+pnpm add https://github.com/Senpawaii/grimoire-lab/releases/download/v<version>/grimoire-core-<version>.tgz \
+         https://github.com/Senpawaii/grimoire-lab/releases/download/v<version>/grimoire-adapters-<version>.tgz
+```
+
+Install both from the same release. `@grimoire/adapters` declares `@grimoire/core` as a peer dependency
+(`^<version>`), so the core you install is the only copy and `instanceof` checks (`SkillNotFound`, ...) keep
+working. **Do not `pnpm add @grimoire/core` from npm:** that name on the npm registry belongs to another
+publisher and is not this project. Release assets are never replaced; pin them by integrity hash.
+
 Skill version tags (`<skill>@<semver>`, used by `--against`) are a separate namespace and do not trigger releases.
 
 ## Development

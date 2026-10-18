@@ -14,6 +14,22 @@ All notable changes to `@grimoire/core` (and the CLI built on it). Format follow
 
 ## Unreleased
 
+## 0.3.1 - 2026-10-18
+
+### Changed
+
+- `@grimoire/adapters` is now a versioned, installable package (`0.3.1`, the same as core) with `license`,
+  `repository`, `engines`, `exports` and `files` like core, and its tarball
+  (`grimoire-adapters-<version>.tgz`) is attached to every release next to core's. `@grimoire/core` is a
+  peer dependency of the adapters instead of a dependency: the consumer's single core copy is used, and
+  nothing is resolved from the npm registry, where the `@grimoire/core` name belongs to another publisher.
+- Release tag validation requires `packages/adapters/package.json` to have core's version.
+
+### Added
+
+- `scripts/smoke-consume.mjs` installs both tarballs into a clean project and checks that
+  `import { getAdapter } from "@grimoire/adapters"` works and resolves the same `@grimoire/core` instance.
+
 ## 0.3.0 - 2026-10-18
 
 ### Added

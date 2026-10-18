@@ -1,8 +1,8 @@
 name: Release
 
-# Push a tag `vX.Y.Z` (it must equal packages/core/package.json's version and have a matching
-# `## X.Y.Z` section in CHANGELOG.md) to build, verify and publish a GitHub release with the
-# @grimoire/core tarball attached. Nothing is published to npm.
+# Push a tag `vX.Y.Z` (it must equal packages/core/package.json's and packages/adapters/package.json's
+# version and have a matching `## X.Y.Z` section in CHANGELOG.md) to build, verify and publish a GitHub
+# release with the @grimoire/core and @grimoire/adapters tarballs attached. Nothing is published to npm.
 on:
   push:
     tags: ["v*"]
@@ -27,11 +27,11 @@ jobs:
       - run: pnpm build
       - run: pnpm test
       - run: node scripts/smoke-consume.mjs
-      - name: Pack @grimoire/core
+      - name: Pack @grimoire/core and @grimoire/adapters
         run: |
           mkdir -p "$RUNNER_TEMP/dist"
-          pnpm pack --pack-destination "$RUNNER_TEMP/dist"
-        working-directory: packages/core
+          pnpm --filter @grimoire/core pack --pack-destination "$RUNNER_TEMP/dist"
+          pnpm --filter @grimoire/adapters pack --pack-destination "$RUNNER_TEMP/dist"
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

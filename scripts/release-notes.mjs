@@ -23,6 +23,15 @@ if (pkg.version !== version) {
   fail(`tag ${tag} does not match packages/core/package.json version ${pkg.version}`);
 }
 
+const adaptersPkg = JSON.parse(
+  readFileSync(join(root, "packages", "adapters", "package.json"), "utf8"),
+);
+if (adaptersPkg.version !== version) {
+  fail(
+    `packages/adapters/package.json version ${adaptersPkg.version} must equal core's ${version} (they release together)`,
+  );
+}
+
 const lines = readFileSync(join(root, "CHANGELOG.md"), "utf8").split(/\r?\n/);
 const heading = new RegExp(`^## \\[?${version.replace(/[.+]/g, "\\$&")}\\]?(\\s|$)`);
 const start = lines.findIndex((l) => heading.test(l));
