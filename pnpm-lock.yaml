@@ -185,8 +185,8 @@ importers:
   packages/adapters:
     dependencies:
       execa:
-        specifier: ^10.1.1
-        version: 10.1.1
+        specifier: ^10.2.1
+        version: 10.2.1
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
@@ -213,8 +213,8 @@ importers:
   packages/core:
     dependencies:
       execa:
-        specifier: ^10.1.1
-        version: 10.1.1
+        specifier: ^10.2.1
+        version: 10.2.1
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
@@ -609,8 +609,8 @@ packages:
   estree-walker@3.0.3:
     resolution: {integrity: sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==}
 
-  execa@10.1.1:
-    resolution: {integrity: sha512-yJAC9ulsE6fU0K6wzJBIH+wI+KAtMeu6Ck8rs23OVzvEhqXjGADdI6K+YNIDAjcQQ6AwXTD96cKExJo6xFJXyg==}
+  execa@10.2.1:
+    resolution: {integrity: sha512-/Bofl3ZBh2Q4/PG0W63qFzP5vDAypi8Zc90UWTBzaDNIYiX7apPOd0N6L8hG8CojUdq4V51adu8BObP+iVsSTw==}
     engines: {node: '>=22'}
 
   expect-type@1.4.0:
@@ -1164,7 +1164,7 @@ snapshots:
     dependencies:
       '@types/estree': 1.0.9
 
-  execa@10.1.1:
+  execa@10.2.1:
     dependencies:
       '@sindresorhus/merge-streams': 4.0.0
       figures: 6.1.0
